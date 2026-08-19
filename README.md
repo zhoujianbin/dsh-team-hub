@@ -1,37 +1,39 @@
 # dsh-team-hub
 
-Turn a single-user [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) Web instance into a secure, workspace-isolated team service.
+把单用户的 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) Web 实例，变成局域网内可安全共用的团队服务。
 
-dsh-team-hub sits between browsers and one local DSH instance. It adds login, roles, workspace isolation, RPC filtering, WebSocket event filtering, an admin console, and audit logging without modifying DSH itself.
+dsh-team-hub 位于浏览器和本地 DSH 实例之间。它不修改 DSH，而是在外层提供登录、角色、工作区隔离、RPC 过滤、WebSocket 事件过滤、Admin 控制台和审计日志。
 
-> Status: v0.1. The first release focuses on secure shared access. Team knowledge/asset evolution is planned for v0.2.
+[English README](README.en.md)
 
-## Why
+> 当前版本：v0.1。首版专注于安全共享访问；团队知识/资产进化能力计划在 v0.2 实现。
 
-DSH Web is intentionally single-user and normally binds to loopback. Sharing that URL directly would give every team member the same high-privilege host access.
+## 为什么需要它
 
-dsh-team-hub provides:
+DSH Web 默认是单用户形态，通常只监听本机回环地址。直接把 DSH 地址分享给团队成员，会让所有人都获得同一个高权限宿主上下文。
 
-- Username/password login
-- First-login password change
-- Admin / Member / Disabled roles
-- Per-member workspace and session isolation
-- Default-deny RPC policy
-- Per-frame WebSocket event filtering
-- Shared knowledge and repository directories
-- Independent admin console
-- Structured audit logs
-- macOS launchd and Linux systemd service setup
-- DSH compatibility self-test
+dsh-team-hub 提供：
 
-## Requirements
+- 用户名/密码登录
+- 首次登录强制修改密码
+- Admin / Member / Disabled 角色状态
+- 按成员隔离工作区和会话
+- DSH RPC 默认拒绝策略
+- WebSocket 事件逐帧过滤
+- 共享知识库和代码仓库目录
+- 独立 Admin 控制台
+- 结构化审计日志
+- macOS launchd / Linux systemd 服务安装
+- DSH 兼容性自检
 
-- Node.js 22 or newer
-- One reachable DSH Web instance, default `http://127.0.0.1:3080`
-- macOS or Linux for service installation
-- A trusted LAN. Do not expose v0.1 directly to the public internet.
+## 环境要求
 
-## Quick start
+- Node.js 22 或更高版本
+- 一个可访问的 DSH Web 实例，默认 `http://127.0.0.1:3080`
+- macOS 或 Linux（用于系统服务安装）
+- 可信局域网。v0.1 不建议直接暴露到公网
+
+## 快速开始
 
 ```bash
 npm install -g dsh-team-hub
@@ -40,19 +42,19 @@ dsh-team-hub init alice bob
 dsh-team-hub start
 ```
 
-The initializer prints an initial admin password once. Open:
+初始化时会打印一次 admin 初始密码。打开：
 
 ```text
-http://<server-lan-ip>:3090
+http://<服务器局域网IP>:3090
 ```
 
-Admin console:
+Admin 控制台：
 
 ```text
-http://<server-lan-ip>:3090/admin
+http://<服务器局域网IP>:3090/admin
 ```
 
-Every user must change their initial password on first login.
+所有用户使用初始密码首次登录后，都必须设置新密码。
 
 ## CLI
 
@@ -69,86 +71,86 @@ dsh-team-hub service status
 dsh-team-hub service uninstall
 ```
 
-Runtime data is stored in:
+运行数据默认保存到：
 
 ```text
 ~/.dsh-team-hub
 ```
 
-Override it with:
+可以通过环境变量修改：
 
 ```bash
 export DSH_TEAM_HUB_HOME=/path/to/data
 ```
 
-## Security model
+## 安全模型
 
-- Unknown DSH RPC methods are denied for members.
-- Unknown WebSocket event types are dropped.
-- Session/workspace ownership is checked for every guarded parameter.
-- Member-facing list responses are filtered to their own resources.
-- Privileged host, settings, credential, workspace-creation, and file-picker methods are member-disabled.
-- Passwords use scrypt.
-- Runtime config and session files are mode 0600.
-- Audit events redact password/token/secret-like fields.
+- Member 未明确允许的 DSH RPC 方法默认拒绝
+- 未识别的 WebSocket 事件类型默认丢弃
+- 所有受保护参数都会校验会话/工作区归属
+- Member 可见列表只包含自己的资源
+- 宿主文件选择、系统设置、凭证、工作区创建/删除等特权方法对 Member 禁用
+- 密码使用 scrypt 哈希
+- 配置和会话文件权限为 0600
+- 审计日志会脱敏 password/token/secret/api-key 类字段
 
-Read the full threat model in [docs/security.md](docs/security.md).
+完整威胁模型见 [docs/security.md](docs/security.md)。
 
-## Admin console
+## Admin 控制台
 
-The console is served by the gateway at `/admin`:
+控制台由网关提供，地址为 `/admin`：
 
-- Overview
-- User create/disable/enable/reset-password
-- Workspace ownership
-- Audit query
-- System status and DSH compatibility self-test
+- 总览
+- 用户创建、禁用、启用、重置密码
+- 工作区归属查看
+- 审计查询
+- 系统状态和 DSH 兼容性自检
 
-Members keep using the normal DSH interface; they do not need to understand the gateway.
+Member 继续使用正常的 DSH 界面，不需要理解网关内部实现。
 
-## Shared directories
+## 共享目录
 
-The runtime home contains:
+运行目录中包含：
 
 ```text
 shared/knowledge
 shared/repo
 ```
 
-These are the base shared locations available to member agents. Publishing/versioning/injecting reusable team assets is planned for v0.2.
+它们是 Member Agent 可读取的基础共享位置。团队资产的发布、版本化和自动注入计划在 v0.2 实现。
 
-## Upgrading DSH
+## 升级 DSH 后
 
-DSH RPC and event protocols are internal and may change. After upgrading DSH:
+DSH 的 RPC 和事件协议仍属于内部协议，升级后可能变化。请运行：
 
 ```bash
 dsh-team-hub selftest
 npm test
 ```
 
-Unknown new DSH methods are denied by default, which prevents accidental data exposure but may require a gateway update to expose new safe features.
+未识别的新 DSH 方法会默认拒绝。这样升级后最多导致新功能暂时不可用，而不会意外泄露其他成员的数据。
 
-## Roadmap
+## 路线图
 
-### v0.2 — Team knowledge evolution
+### v0.2 — 团队知识进化
 
-- Candidate asset submission
-- Admin review and publication
-- Versioning and rollback
-- AGENTS, prompts, skills, and templates
-- Automatic injection into member sessions
-- Usage feedback
+- 成员提交候选资产
+- Admin 审阅并发布
+- 版本管理和回滚
+- AGENTS、提示词、Skills、模板
+- 自动注入到成员会话
+- 使用效果反馈
 
-### Later
+### 后续版本
 
-- Codex/KimiWork read-only session aggregation
-- Team analytics
-- Optional HTTPS termination guidance
-- Multi-host management
+- Codex / KimiWork 会话只读聚合
+- 团队使用统计
+- HTTPS 反向代理部署模板
+- 多 DSH 主机管理
 
-## Disclaimer
+## 免责声明
 
-This is an independent community project and is not an official DeepSeek product.
+这是独立社区项目，不是 DeepSeek 官方产品。
 
 ## License
 
