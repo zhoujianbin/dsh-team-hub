@@ -4,7 +4,7 @@
   "description": "Turn a single-user DeepSeek Harness instance into a secure, workspace-isolated team service",
   "type": "module",
   "bin": {
-    "dsh-team-hub": "./bin/dsh-team-hub.js"
+    "dsh-team-hub": "bin/dsh-team-hub.js"
   },
   "files": [
     "bin",
