@@ -11,7 +11,7 @@ test("package metadata is ready for public npm distribution", () => {
   assert.equal(pkg.name, "dsh-team-hub");
   assert.equal(pkg.type, "module");
   assert.equal(pkg.license, "MIT");
-  assert.equal(pkg.bin["dsh-team-hub"], "./bin/dsh-team-hub.js");
+  assert.equal(pkg.bin["dsh-team-hub"], "bin/dsh-team-hub.js");
   assert.ok(pkg.files.includes("src"));
   assert.ok(pkg.files.includes("admin-ui"));
   assert.ok(!pkg.files.includes("legacy-gateway.mjs"));
