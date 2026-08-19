@@ -272,8 +272,11 @@ export async function startServer() {
       const pending = [];
       const answerable = new Set();
       upstream.on("open", () => pending.splice(0).forEach(data => upstream.send(data)));
-      downstream.on("message", data => {
+      // 注意：DSH 协议全部使用文本帧。ws 库 send(Buffer) 会发二进制帧，
+      // DSH 客户端会把二进制帧当作畸形帧丢弃——必须按原始帧类型转发。
+      downstream.on("message", (data, isBinary) => {
         if (user.role === "member") {
+          if (isBinary) return;
           try {
             const frame = JSON.parse(data.toString("utf8"));
             if (!isAllowedClientFrame({ ownership: context.ownership, user, frame, answerable })) {
@@ -282,12 +285,15 @@ export async function startServer() {
             }
           } catch { return; }
         }
-        if (upstream.readyState === WebSocket.OPEN) upstream.send(data); else pending.push(data);
+        const out = isBinary ? data : data.toString("utf8");
+        if (upstream.readyState === WebSocket.OPEN) upstream.send(out); else pending.push(out);
       });
-      upstream.on("message", data => {
+      upstream.on("message", (data, isBinary) => {
         if (user.role === "member") {
+          if (isBinary) return;
+          let frame;
           try {
-            const frame = JSON.parse(data.toString("utf8"));
+            frame = JSON.parse(data.toString("utf8"));
             const allowed = stream === "mux"
               ? filterMuxFrame({ ownership: context.ownership, user, frame, answerable, onUnknown: type => context.audit.write("ws.unknown-mux-frame", { type }) })
               : filterHostFrame({ config: context.config, ownership: context.ownership, user, frame, onUnknown: type => context.audit.write("ws.unknown-host-frame", { type }) });
@@ -300,10 +306,11 @@ export async function startServer() {
               });
               return;
             }
-            data = Buffer.from(JSON.stringify(frame));
           } catch { return; }
+          downstream.send(JSON.stringify(frame));
+          return;
         }
-        downstream.send(data);
+        downstream.send(isBinary ? data : data.toString("utf8"));
       });
       downstream.on("close", () => upstream.close());
       upstream.on("close", () => downstream.close());
