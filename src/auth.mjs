@@ -37,6 +37,15 @@ export function resolveSession(home, token) {
   return session;
 }
 
+export function revokeSession(home, token) {
+  if (!token) return false;
+  const sessions = loadSessions(home);
+  if (!sessions[token]) return false;
+  delete sessions[token];
+  saveSessions(home, sessions);
+  return true;
+}
+
 export function revokeSessionsForUser(home, username) {
   const sessions = loadSessions(home);
   let count = 0;

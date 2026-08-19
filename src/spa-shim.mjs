@@ -17,8 +17,31 @@ export const BROWSER_COMPAT_SHIM = `<script>
 })();
 </script>`;
 
+export const USER_BAR_SHIM = `<script>
+(async () => {
+  // 右下角悬浮条：显示当前登录用户（displayName），提供退出登录。
+  try {
+    const res = await fetch("/__teamhub/whoami", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const me = await res.json();
+    const bar = document.createElement("div");
+    bar.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:99999;display:flex;align-items:center;gap:8px;background:#111827;color:#fff;padding:6px 10px;border-radius:999px;font:12px -apple-system,sans-serif;box-shadow:0 2px 10px rgb(0 0 0/20%);opacity:.85";
+    const label = document.createElement("span");
+    label.textContent = (me.displayName || me.name) + (me.role === "admin" ? " · 管理员" : "");
+    const out = document.createElement("a");
+    out.href = "/logout";
+    out.textContent = "退出";
+    out.style.cssText = "color:#93c5fd;text-decoration:none";
+    bar.append(label, out);
+    document.addEventListener("DOMContentLoaded", () => document.body.appendChild(bar));
+    if (document.readyState !== "loading") document.body.appendChild(bar);
+  } catch {}
+})();
+</script>`;
+
 export function injectSpaShim(html) {
   if (html.includes("crypto.randomUUID = function randomUUID")) return html;
-  if (html.includes("<head>")) return html.replace("<head>", "<head>" + BROWSER_COMPAT_SHIM);
-  return BROWSER_COMPAT_SHIM + html;
+  const payload = BROWSER_COMPAT_SHIM + USER_BAR_SHIM;
+  if (html.includes("<head>")) return html.replace("<head>", "<head>" + payload);
+  return payload + html;
 }

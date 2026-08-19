@@ -47,9 +47,10 @@ async function renderUsers() {
     <form class="inline" id="create-user"><input name="name" placeholder="用户名" required>
     <select name="role"><option value="member">member</option><option value="admin">admin</option></select>
     <button>创建用户</button></form>
-    <table><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>
-    ${users.map(u => `<tr><td>${esc(u.name)}</td><td>${badge(u.role, u.role)}</td><td>${badge(u.status, u.status)}</td><td>${esc(u.lastLoginAt || "从未")}</td>
-    <td><button class="secondary" data-action="reset" data-name="${esc(u.name)}">重置密码</button>
+    <table><thead><tr><th>登录名</th><th>显示名</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody>
+    ${users.map(u => `<tr><td class="mono">${esc(u.name)}</td><td>${esc(u.displayName || u.name)}</td><td>${badge(u.role, u.role)}</td><td>${badge(u.status, u.status)}</td><td>${esc(u.lastLoginAt || "从未")}</td>
+    <td><button class="secondary" data-action="rename" data-name="${esc(u.name)}" data-display="${esc(u.displayName || u.name)}">改名</button>
+    <button class="secondary" data-action="reset" data-name="${esc(u.name)}">重置密码</button>
     <button class="secondary" data-action="${u.status === "disabled" ? "enable" : "disable"}" data-name="${esc(u.name)}">${u.status === "disabled" ? "启用" : "禁用"}</button></td></tr>`).join("")}
     </tbody></table><p id="message"></p></section>`;
   document.querySelector("#create-user").onsubmit = async event => {
@@ -63,6 +64,11 @@ async function renderUsers() {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const name = button.dataset.name;
+    if (button.dataset.action === "rename") {
+      const next = prompt("新的显示名（界面展示用，登录名不变）", button.dataset.display || "");
+      if (next && next.trim()) await api(`/users/${encodeURIComponent(name)}/display-name`, { method: "POST", body: { displayName: next.trim() } });
+      return renderUsers();
+    }
     if (button.dataset.action === "reset") {
       const result = await api(`/users/${encodeURIComponent(name)}/reset-password`, { method: "POST" });
       document.querySelector("#message").innerHTML = `新初始密码：<code class="mono">${esc(result.initialPassword)}</code>（只显示一次）`;

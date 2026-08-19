@@ -3,6 +3,7 @@ import { generatePassword, hashPassword, verifyPassword } from "./passwords.mjs"
 export function publicUser(user) {
   return {
     name: user.name,
+    displayName: user.displayName || user.name,
     role: user.role,
     status: user.status || "active",
     mustChangePassword: Boolean(user.mustChangePassword),
@@ -33,6 +34,15 @@ export function setUserStatus(config, name, status) {
     if (activeAdmins.length === 0) throw new Error("不能禁用最后一个启用的 admin");
   }
   user.status = status;
+  user.updatedAt = new Date().toISOString();
+  return user;
+}
+
+export function setDisplayName(config, name, displayName) {
+  const user = findUser(config, name);
+  if (!user) throw new Error(`用户不存在：${name}`);
+  if (typeof displayName !== "string" || displayName.length < 1 || displayName.length > 32) throw new Error("显示名长度需为 1-32 字符");
+  user.displayName = displayName;
   user.updatedAt = new Date().toISOString();
   return user;
 }

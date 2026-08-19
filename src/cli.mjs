@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConfig, defaultHome, saveConfig, loadConfig } from "./config.mjs";
-import { createUser, resetPassword, setUserStatus } from "./users.mjs";
+import { createUser, resetPassword, setUserStatus, setDisplayName } from "./users.mjs";
 import { compatibilityReport } from "./compat.mjs";
 import { launchdPlist, launchdPath, LAUNCHD_LABEL } from "./service-launchd.mjs";
 import { systemdUnit, systemdPath, SYSTEMD_UNIT } from "./service-systemd.mjs";
@@ -16,7 +16,8 @@ function printHelp() {
   dsh-team-hub init [--port 3090] [--upstream http://127.0.0.1:3080]
   dsh-team-hub start
   dsh-team-hub selftest
-  dsh-team-hub user add <name> [--role member|admin]
+  dsh-team-hub user add <name> [--role member|admin] [--display-name 显示名]
+  dsh-team-hub user set-display-name <name> <显示名>
   dsh-team-hub user disable <name>
   dsh-team-hub user enable <name>
   dsh-team-hub user reset-password <name>
@@ -55,8 +56,16 @@ async function userCommand(args) {
   const { home, config } = loadConfig();
   if (action === "add") {
     const result = createUser(config, { name, role: option(args, "--role", "member") });
+    const displayName = option(args, "--display-name", null);
+    if (displayName) setDisplayName(config, name, displayName);
     saveConfig(home, config);
     console.log(`用户 ${name} 已创建，初始密码：${result.initialPassword}`);
+    return;
+  }
+  if (action === "set-display-name") {
+    setDisplayName(config, name, args[2]);
+    saveConfig(home, config);
+    console.log(`用户 ${name} 显示名已设为：${args[2]}`);
     return;
   }
   if (action === "disable" || action === "enable") {

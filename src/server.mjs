@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { loadConfig, saveConfig } from "./config.mjs";
 import { authenticate, changePassword, publicUser } from "./users.mjs";
-import { parseCookies, resolveSession, issueSession } from "./auth.mjs";
+import { parseCookies, resolveSession, issueSession, revokeSession } from "./auth.mjs";
 import { AuditLog } from "./audit.mjs";
 import { createAdminApi } from "./admin-api.mjs";
 import { createOwnership, guardMemberRequest, filterMemberResponse, learnWorkspace, learnSession } from "./policy.mjs";
@@ -135,6 +135,11 @@ async function handleAdminApi(context, req, res, pathname, query) {
   }
   const resetMatch = pathname.match(/^\/users\/([^/]+)\/reset-password$/);
   if (req.method === "POST" && resetMatch) return send(res, 200, api.resetPassword(decodeURIComponent(resetMatch[1])));
+  const nameMatch = pathname.match(/^\/users\/([^/]+)\/display-name$/);
+  if (req.method === "POST" && nameMatch) {
+    const body = JSON.parse((await collect(req)).toString("utf8") || "{}");
+    return send(res, 200, api.setDisplayName(decodeURIComponent(nameMatch[1]), body.displayName));
+  }
   if (req.method === "GET" && pathname === "/workspaces") return send(res, 200, api.workspaces());
   if (req.method === "GET" && pathname === "/audit") return send(res, 200, api.audit({ limit: Number(query.get("limit") || 200), user: query.get("user"), type: query.get("type") }));
   if (req.method === "GET" && pathname === "/system") return send(res, 200, { upstream: context.config.upstream, users: context.config.users.length, node: process.version });
@@ -190,9 +195,17 @@ export async function startServer() {
         const next = found.mustChangePassword ? "/change-password" : String(form.get("next") || "/");
         return send(res, 302, "", { location: next, "set-cookie": `${COOKIE}=${encodeURIComponent(issued.token)}; Path=/; HttpOnly; SameSite=Lax` });
       }
+      if (url.pathname === "/logout") {
+        revokeSession(home, cookies[COOKIE]);
+        context.audit.write("auth.logout", { user: session?.username || "" });
+        return send(res, 302, "", { location: "/login", "set-cookie": `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0` });
+      }
       if (!user) {
         if (url.pathname.startsWith("/api/")) return rpcError(res, null, "unauthorized", "not logged in", 401);
         return send(res, 302, "", { location: "/login?next=" + encodeURIComponent(req.url) });
+      }
+      if (url.pathname === "/__teamhub/whoami") {
+        return send(res, 200, { name: user.name, displayName: user.displayName || user.name, role: user.role });
       }
       if (user.mustChangePassword && url.pathname !== "/change-password") return send(res, 302, "", { location: "/change-password" });
       if (url.pathname === "/change-password") {

@@ -1,4 +1,4 @@
-import { publicUser, createUser, setUserStatus, resetPassword } from "./users.mjs";
+import { publicUser, createUser, setUserStatus, resetPassword, setDisplayName } from "./users.mjs";
 import { revokeSessionsForUser } from "./auth.mjs";
 
 export function createAdminApi({ home, getConfig, save, ownership, audit }) {
@@ -27,6 +27,13 @@ export function createAdminApi({ home, getConfig, save, ownership, audit }) {
       if (status === "disabled") revokeSessionsForUser(home, name);
       save(config);
       audit.write("admin.user-status", { user: name, status });
+      return publicUser(user);
+    },
+    setDisplayName(name, displayName) {
+      const config = getConfig();
+      const user = setDisplayName(config, name, displayName);
+      save(config);
+      audit.write("admin.display-name", { user: name, displayName });
       return publicUser(user);
     },
     resetPassword(name) {
