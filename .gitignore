@@ -1,0 +1,11 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+coverage/
+*.tgz
+.dsh-team-hub/
+config.json
+sessions.json
+logs/
+workspaces/
+shared/
