@@ -167,6 +167,7 @@ export async function startServer() {
     adminApi: null
   };
   // CLI（user add/disable 等）直接改 config.json；运行中的网关需要在下次请求时感知。
+  let ensuring = false;
   function reloadConfigIfChanged() {
     try {
       const mtime = fs.statSync(configFile).mtimeMs;
@@ -174,6 +175,11 @@ export async function startServer() {
       configMtime = mtime;
       context.config = loadConfig(home).config;
       context.audit.write("system.config-reloaded", {});
+      // 新增的成员需要就地建工作区，否则要等下次重启
+      if (!ensuring) {
+        ensuring = true;
+        ensureMemberWorkspaces(context).finally(() => { ensuring = false; });
+      }
     } catch {}
   }
   context.adminApi = createAdminApi({
