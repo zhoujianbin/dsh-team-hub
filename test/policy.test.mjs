@@ -57,6 +57,15 @@ test("message feedback and slash commands are guarded by session ownership", () 
   }
 });
 
+test("nested args.request ownership fields are guarded (Typert remotes)", () => {
+  const { config, ownership, alice } = fixture();
+  const own = { args: { request: { sessionId: "sa" } } };
+  const other = { args: { request: { sessionId: "sb" } } };
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "messageFeedback/list", payload: own }).ok, true);
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "messageFeedback/list", payload: other }).ok, false);
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: { args: { agentId: "sb", line: "/x" } } }).ok, false);
+});
+
 test("agentId is treated as session ownership (commands/execute)", () => {
   const { config, ownership, alice } = fixture();
   assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: { agentId: "sa", line: "/help" } }).ok, true);

@@ -96,20 +96,28 @@ export function guardMemberRequest({ config, ownership, user, method, payload })
     return { ok: true, payload: out };
   }
 
+  // Typert remote 的归属字段嵌套在 args / args.request 里（如 messageFeedback/list、commands/execute）。
+  const candidates = [p];
+  if (p.args && typeof p.args === "object" && !Array.isArray(p.args)) {
+    candidates.push(p.args);
+    if (p.args.request && typeof p.args.request === "object" && !Array.isArray(p.args.request)) candidates.push(p.args.request);
+  }
   // agentId 在 Typert remote 中是 SessionId 的线上字段名（如 commands/execute）
-  for (const key of ["sessionId", "parentSessionId", "childSessionId", "beforeSessionId", "agentId"]) {
-    if (typeof p[key] === "string") {
-      const owned = ownedBy(ownership, user, "session", p[key]);
-      if (owned === false) return { ok: false, message: "无权访问该会话" };
-      if (owned === "unknown") return { ok: false, message: "会话归属未知，已拒绝（请刷新后重试）" };
+  for (const obj of candidates) {
+    for (const key of ["sessionId", "parentSessionId", "childSessionId", "beforeSessionId", "agentId"]) {
+      if (typeof obj[key] === "string") {
+        const owned = ownedBy(ownership, user, "session", obj[key]);
+        if (owned === false) return { ok: false, message: "无权访问该会话" };
+        if (owned === "unknown") return { ok: false, message: "会话归属未知，已拒绝（请刷新后重试）" };
+      }
     }
-  }
-  for (const key of ["workspaceId", "beforeWorkspaceId"]) {
-    if (typeof p[key] === "string" && ownedBy(ownership, user, "workspace", p[key]) !== true) {
-      return { ok: false, message: "无权访问该工作区" };
+    for (const key of ["workspaceId", "beforeWorkspaceId"]) {
+      if (typeof obj[key] === "string" && ownedBy(ownership, user, "workspace", obj[key]) !== true) {
+        return { ok: false, message: "无权访问该工作区" };
+      }
     }
+    if (typeof obj.cwd === "string" && ownerOfPath(config, obj.cwd) !== user.name) return { ok: false, message: "无权访问该目录" };
   }
-  if (typeof p.cwd === "string" && ownerOfPath(config, p.cwd) !== user.name) return { ok: false, message: "无权访问该目录" };
   return { ok: true, payload: p };
 }
 
