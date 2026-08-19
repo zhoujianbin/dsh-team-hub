@@ -47,6 +47,15 @@ test("unknown frames are dropped", () => {
   assert.equal(unknown, "host/future");
 });
 
+test("subscribe to unknown session is allowed, other member's is denied", () => {
+  const { ownership, user } = fixture();
+  const answerable = new Set();
+  const sub = sid => ({ type: "client-request", rpcId: "r", method: "session/subscribe", payload: { sessionId: sid } });
+  assert.equal(isAllowedClientFrame({ ownership, user, answerable, frame: sub("unknown-new") }), true);
+  assert.equal(isAllowedClientFrame({ ownership, user, answerable, frame: sub("sa") }), true);
+  assert.equal(isAllowedClientFrame({ ownership, user, answerable, frame: sub("sb") }), false);
+});
+
 test("client can only answer registered approval ids", () => {
   const { ownership, user } = fixture();
   const answerable = new Set(["r1"]);

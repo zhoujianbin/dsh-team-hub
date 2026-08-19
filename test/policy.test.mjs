@@ -49,6 +49,13 @@ test("ui-onboarding settings mutation is the only settings exception", () => {
   assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "settings.mutate", payload: { ns: "llm", ops: [] } }).ok, false);
 });
 
+test("workspace view overrides earlier admin guess for its sessions", () => {
+  const { config, ownership } = fixture();
+  ownership.sessionOwner.set("s9", "admin"); // host/session-added 缺 cwd 时的猜测
+  learnWorkspace(config, ownership, { workspaceId: "wx", path: "/tmp/dsh-team-hub-test/workspaces/alice", sessionIds: ["s9"] });
+  assert.equal(ownership.sessionOwner.get("s9"), "alice");
+});
+
 test("cwd ownership is based on member workspace roots", () => {
   const { config, ownership } = fixture();
   learnSession(config, ownership, "s2", "/tmp/dsh-team-hub-test/workspaces/bob/project", null);

@@ -49,7 +49,8 @@ export function learnWorkspace(config, ownership, view) {
   const owner = ownerOfPath(config, view.path) || "admin";
   ownership.workspaceOwner.set(view.workspaceId, owner);
   for (const sessionId of view.sessionIds || []) {
-    if (!ownership.sessionOwner.has(sessionId)) ownership.sessionOwner.set(sessionId, owner);
+    // 工作区路径能解析到成员时是权威归属：覆盖 host/session-added 在缺 cwd 时的 admin 猜测。
+    if (owner !== "admin" || !ownership.sessionOwner.has(sessionId)) ownership.sessionOwner.set(sessionId, owner);
   }
 }
 

@@ -66,7 +66,10 @@ export function isAllowedClientFrame({ ownership, user, frame, answerable }) {
   if (frame.type === "client-request" && typeof frame.rpcId === "string" && typeof frame.method === "string") {
     if (frame.method === "respond") return answerable.has(frame.rpcId);
     if (frame.method === "session/subscribe" || frame.method === "session/unsubscribe") {
-      return ownership.sessionOwner.get(payload.sessionId) === user.name;
+      // 归属未知时放行：新会话的 subscribe 可能先于 host/session-added 到达。
+      // 安全性由上游帧的逐一过滤保证——归属为他人的会话事件永远不会被转发。
+      const owner = ownership.sessionOwner.get(payload.sessionId);
+      return owner === undefined || owner === user.name;
     }
     return false;
   }
