@@ -51,11 +51,15 @@ export const AUTO_SELECT_SHIM = `<script>
     let attempts = 0;
     const timer = setInterval(() => {
       attempts += 1;
-      if (attempts > 60) return clearInterval(timer);
+      if (attempts > 90) return clearInterval(timer);
       const items = [...document.querySelectorAll('[role="treeitem"]')];
       if (items.length === 0) return;
-      const composer = document.querySelector("textarea[placeholder*='选择工作区'], input[placeholder*='选择工作区'], textarea[placeholder*='选择一个工作区']");
-      if (!composer) return clearInterval(timer); // 已有选中工作区，无需干预
+      const composer = document.querySelector("textarea");
+      if (composer) {
+        const ph = composer.placeholder || "";
+        // 占位符不再要求选工作区 = 已选中，停止；composer 还没渲染则继续等
+        if (!ph.includes("选择工作区") && !ph.includes("选择一个工作区")) return clearInterval(timer);
+      }
       const target = items.find(el => (el.getAttribute("aria-label") || el.textContent || "").trim() === me.name)
         || items.find(el => (el.getAttribute("aria-label") || el.textContent || "").trim().startsWith(me.name));
       if (target) target.click();
