@@ -82,6 +82,21 @@ export function guardMemberRequest({ config, ownership, user, method, payload })
   if (!MEMBER_GUARDED.has(method)) return { ok: false, message: `方法 ${method} 不在 Member 白名单` };
   const p = payload && typeof payload === "object" ? payload : {};
 
+  if (method === "commands/execute") {
+    // 权限模式锁定：成员会话只能用 workspace-write。
+    // /permission 无参数是查询（放行）；切到 danger-full-access/custom 一律拒绝。
+    const line = (p.args && typeof p.args === "object" ? p.args.line : undefined) ?? p.line;
+    if (typeof line === "string") {
+      const match = line.trim().match(/^\/permission(?:\s+(.*))?$/);
+      if (match) {
+        const target = (match[1] || "").trim();
+        if (target !== "" && target !== "workspace-write") {
+          return { ok: false, message: "成员会话的权限模式已锁定为 workspace-write，不能切换到 " + target };
+        }
+      }
+    }
+  }
+
   if (method === "session.create") {
     const out = { ...p };
     if (out.workspaceId !== undefined) {

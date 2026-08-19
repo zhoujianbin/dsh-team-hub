@@ -57,6 +57,16 @@ test("message feedback and slash commands are guarded by session ownership", () 
   }
 });
 
+test("members cannot switch permission preset away from workspace-write", () => {
+  const { config, ownership, alice } = fixture();
+  const exec = line => ({ args: { agentId: "sa", line } });
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: exec("/permission") }).ok, true);
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: exec("/permission workspace-write") }).ok, true);
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: exec("/permission danger-full-access") }).ok, false);
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: exec("/permission custom") }).ok, false);
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: exec("/compact") }).ok, true);
+});
+
 test("nested args.request ownership fields are guarded (Typert remotes)", () => {
   const { config, ownership, alice } = fixture();
   const own = { args: { request: { sessionId: "sa" } } };
