@@ -1,0 +1,24 @@
+:root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2937; background: #f3f4f6; }
+* { box-sizing: border-box; }
+body { margin: 0; display: flex; min-height: 100vh; }
+aside { width: 220px; background: #111827; color: white; padding: 24px; position: fixed; inset: 0 auto 0 0; }
+h1 { font-size: 18px; margin: 0 0 28px; }
+nav { display: grid; gap: 8px; }
+a { color: #d1d5db; text-decoration: none; padding: 10px 12px; border-radius: 8px; }
+a.active, a:hover { color: white; background: #374151; }
+main { margin-left: 220px; padding: 28px; flex: 1; }
+.card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 18px; box-shadow: 0 1px 3px rgb(0 0 0 / 8%); }
+.card h2 { margin-top: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+th { color: #6b7280; font-weight: 600; }
+button, input, select { font: inherit; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 10px; }
+button { background: #111827; color: white; border-color: #111827; cursor: pointer; }
+button.secondary { background: white; color: #111827; }
+form.inline { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.badge { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 12px; background: #e5e7eb; }
+.badge.admin { background: #dbeafe; color: #1d4ed8; }
+.badge.disabled { background: #fee2e2; color: #b91c1c; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.error { color: #b91c1c; }
+.success { color: #047857; }
