@@ -157,7 +157,8 @@ function serveAdminUi(res, pathname) {
 }
 
 export async function startServer() {
-  const { home, config } = loadConfig();
+  const { home, file: configFile, config } = loadConfig();
+  let configMtime = fs.statSync(configFile).mtimeMs;
   const context = {
     home,
     config,
@@ -165,6 +166,16 @@ export async function startServer() {
     audit: new AuditLog(home),
     adminApi: null
   };
+  // CLI（user add/disable 等）直接改 config.json；运行中的网关需要在下次请求时感知。
+  function reloadConfigIfChanged() {
+    try {
+      const mtime = fs.statSync(configFile).mtimeMs;
+      if (mtime === configMtime) return;
+      configMtime = mtime;
+      context.config = loadConfig(home).config;
+      context.audit.write("system.config-reloaded", {});
+    } catch {}
+  }
   context.adminApi = createAdminApi({
     home,
     getConfig: () => context.config,
@@ -177,6 +188,7 @@ export async function startServer() {
 
   const server = http.createServer(async (req, res) => {
     try {
+      reloadConfigIfChanged();
       const url = new URL(req.url, "http://local");
       const cookies = parseCookies(req);
       const session = resolveSession(home, cookies[COOKIE]);
@@ -236,6 +248,7 @@ export async function startServer() {
 
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", async (req, socket, head) => {
+    reloadConfigIfChanged();
     const cookies = parseCookies(req);
     const session = resolveSession(home, cookies[COOKIE]);
     const user = session && context.config.users.find(u => u.name === session.username && (u.status || "active") === "active");
