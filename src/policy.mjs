@@ -22,6 +22,9 @@ export const MEMBER_GUARDED = new Set([
   "session.attachment", "session.models", "session.selectModel", "session.updateQueue",
   "skill.list", "subagent.list", "subagent.history", "subagent.prompt", "subagent.interrupt",
   "agentPreset.select",
+  // 消息反馈（👍/👎）与斜杠命令执行：均按会话归属守卫
+  "messageFeedback/list", "messageFeedback/put", "messageFeedback/delete",
+  "commands/execute",
   "goal.create", "goal.edit", "goal.pause", "goal.resume", "goal.complete", "goal.clear"
 ]);
 
@@ -93,7 +96,8 @@ export function guardMemberRequest({ config, ownership, user, method, payload })
     return { ok: true, payload: out };
   }
 
-  for (const key of ["sessionId", "parentSessionId", "childSessionId", "beforeSessionId"]) {
+  // agentId 在 Typert remote 中是 SessionId 的线上字段名（如 commands/execute）
+  for (const key of ["sessionId", "parentSessionId", "childSessionId", "beforeSessionId", "agentId"]) {
     if (typeof p[key] === "string") {
       const owned = ownedBy(ownership, user, "session", p[key]);
       if (owned === false) return { ok: false, message: "无权访问该会话" };

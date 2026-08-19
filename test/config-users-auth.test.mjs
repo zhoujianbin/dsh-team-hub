@@ -20,6 +20,24 @@ test("config validates and persists", () => {
   assert.equal(loaded.upstream, "http://127.0.0.1:3080");
 });
 
+test("loadConfig canonicalizes symlinked workspaceRoot/sharedRoot", () => {
+  // dsh 上游用 fs.realpath 规范化工作区路径；loadConfig 必须同步规范化，
+  // 否则符号链接路径（如 macOS /tmp→/private/tmp）下 member 归属匹配失效
+  const base = tempHome();
+  const realHome = path.join(base, "real");
+  const linkHome = path.join(base, "link");
+  fs.mkdirSync(realHome, { recursive: true });
+  fs.symlinkSync(realHome, linkHome);
+  const config = defaultConfig(linkHome);
+  createUser(config, { name: "admin", role: "admin", password: "admin-pass-1" });
+  saveConfig(linkHome, config);
+  fs.mkdirSync(config.workspaceRoot, { recursive: true });
+  fs.mkdirSync(config.sharedRoot, { recursive: true });
+  const loaded = loadConfig(linkHome).config;
+  assert.equal(loaded.workspaceRoot, fs.realpathSync(path.join(linkHome, "workspaces")));
+  assert.equal(loaded.sharedRoot, fs.realpathSync(path.join(linkHome, "shared")));
+});
+
 test("users authenticate, change passwords, disable and reset", () => {
   const config = defaultConfig(tempHome());
   createUser(config, { name: "admin", role: "admin", password: "admin-pass-1" });

@@ -49,6 +49,20 @@ test("ui-onboarding settings mutation is the only settings exception", () => {
   assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "settings.mutate", payload: { ns: "llm", ops: [] } }).ok, false);
 });
 
+test("message feedback and slash commands are guarded by session ownership", () => {
+  const { config, ownership, alice } = fixture();
+  for (const method of ["messageFeedback/list", "messageFeedback/put", "messageFeedback/delete"]) {
+    assert.equal(guardMemberRequest({ config, ownership, user: alice, method, payload: { sessionId: "sa" } }).ok, true, method);
+    assert.equal(guardMemberRequest({ config, ownership, user: alice, method, payload: { sessionId: "sb" } }).ok, false, method);
+  }
+});
+
+test("agentId is treated as session ownership (commands/execute)", () => {
+  const { config, ownership, alice } = fixture();
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: { agentId: "sa", line: "/help" } }).ok, true);
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "commands/execute", payload: { agentId: "sb", line: "/help" } }).ok, false);
+});
+
 test("workspace view overrides earlier admin guess for its sessions", () => {
   const { config, ownership } = fixture();
   ownership.sessionOwner.set("s9", "admin"); // host/session-added 缺 cwd 时的猜测

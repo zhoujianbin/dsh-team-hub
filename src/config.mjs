@@ -29,6 +29,12 @@ export function loadConfig(home = defaultHome()) {
   if (!fs.existsSync(file)) throw new Error(`配置文件不存在：${file}，请先运行 dsh-team-hub init`);
   const raw = JSON.parse(fs.readFileSync(file, "utf8"));
   const config = { ...defaultConfig(home), ...raw };
+  // dsh 上游注册工作区时会用 fs.realpath 规范化路径；这里同步规范化，
+  // 否则 HOME/workspaceRoot 经过符号链接（如 macOS 的 /tmp→/private/tmp、/var→/private/var）时
+  // ownerOfPath 匹配失败，member 会看不到自己的工作区（归属被误判为 admin）。
+  for (const key of ["workspaceRoot", "sharedRoot"]) {
+    try { config[key] = fs.realpathSync(config[key]); } catch { config[key] = path.resolve(config[key]); }
+  }
   validateConfig(config);
   return { home, file, config };
 }

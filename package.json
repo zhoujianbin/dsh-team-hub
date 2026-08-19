@@ -1,6 +1,6 @@
 {
   "name": "dsh-team-hub",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Turn a single-user DeepSeek Harness instance into a secure, workspace-isolated team service",
   "type": "module",
   "bin": {
@@ -20,6 +20,7 @@
     "start": "node bin/dsh-team-hub.js start",
     "test": "node --test test/*.test.mjs",
     "selftest": "node bin/dsh-team-hub.js selftest",
+    "acceptance": "node scripts/acceptance.mjs",
     "pack:check": "npm pack --dry-run"
   },
   "keywords": [
