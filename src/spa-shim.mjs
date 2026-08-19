@@ -39,9 +39,34 @@ export const USER_BAR_SHIM = `<script>
 })();
 </script>`;
 
+export const AUTO_SELECT_SHIM = `<script>
+(async () => {
+  // Member 只有一个工作区：首次进入时自动在侧栏选中它，跳过"选择工作区"步骤。
+  // 工作区列表已被网关过滤为本人可见，选择器里没有别的目标，也不允许新建。
+  try {
+    const res = await fetch("/__teamhub/whoami", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const me = await res.json();
+    if (me.role !== "member" || !me.name) return;
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts += 1;
+      if (attempts > 60) return clearInterval(timer);
+      const items = [...document.querySelectorAll('[role="treeitem"]')];
+      if (items.length === 0) return;
+      const composer = document.querySelector("textarea[placeholder*='选择工作区'], input[placeholder*='选择工作区'], textarea[placeholder*='选择一个工作区']");
+      if (!composer) return clearInterval(timer); // 已有选中工作区，无需干预
+      const target = items.find(el => (el.getAttribute("aria-label") || el.textContent || "").trim() === me.name)
+        || items.find(el => (el.getAttribute("aria-label") || el.textContent || "").trim().startsWith(me.name));
+      if (target) target.click();
+    }, 1000);
+  } catch {}
+})();
+</script>`;
+
 export function injectSpaShim(html) {
   if (html.includes("crypto.randomUUID = function randomUUID")) return html;
-  const payload = BROWSER_COMPAT_SHIM + USER_BAR_SHIM;
+  const payload = BROWSER_COMPAT_SHIM + USER_BAR_SHIM + AUTO_SELECT_SHIM;
   if (html.includes("<head>")) return html.replace("<head>", "<head>" + payload);
   return payload + html;
 }
