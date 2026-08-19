@@ -47,6 +47,12 @@ export function createAdminApi({ home, getConfig, save, ownership, audit }) {
     workspaces() {
       return [...ownership.workspaceOwner.entries()].map(([workspaceId, owner]) => ({ workspaceId, owner }));
     },
+    ownershipDebug() {
+      return {
+        workspaces: Object.fromEntries(ownership.workspaceOwner),
+        sessions: Object.fromEntries(ownership.sessionOwner)
+      };
+    },
     audit(query) { return audit.query(query); }
   };
 }

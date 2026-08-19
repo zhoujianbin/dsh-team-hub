@@ -141,6 +141,7 @@ async function handleAdminApi(context, req, res, pathname, query) {
     return send(res, 200, api.setDisplayName(decodeURIComponent(nameMatch[1]), body.displayName));
   }
   if (req.method === "GET" && pathname === "/workspaces") return send(res, 200, api.workspaces());
+  if (req.method === "GET" && pathname === "/debug/ownership") return send(res, 200, api.ownershipDebug());
   if (req.method === "GET" && pathname === "/audit") return send(res, 200, api.audit({ limit: Number(query.get("limit") || 200), user: query.get("user"), type: query.get("type") }));
   if (req.method === "GET" && pathname === "/system") return send(res, 200, { upstream: context.config.upstream, users: context.config.users.length, node: process.version });
   if (req.method === "POST" && pathname === "/selftest") return send(res, 200, await compatibilityReport(context.config));
@@ -290,7 +291,15 @@ export async function startServer() {
             const allowed = stream === "mux"
               ? filterMuxFrame({ ownership: context.ownership, user, frame, answerable, onUnknown: type => context.audit.write("ws.unknown-mux-frame", { type }) })
               : filterHostFrame({ config: context.config, ownership: context.ownership, user, frame, onUnknown: type => context.audit.write("ws.unknown-host-frame", { type }) });
-            if (!allowed) return;
+            if (!allowed) {
+              context.audit.write("ws.frame-dropped", {
+                user: user.name, stream,
+                frameType: frame?.payload?.type || "unknown",
+                sessionId: frame?.payload?.sessionId || "",
+                mappedOwner: frame?.payload?.sessionId ? (context.ownership.sessionOwner.get(frame.payload.sessionId) || "unknown") : ""
+              });
+              return;
+            }
             data = Buffer.from(JSON.stringify(frame));
           } catch { return; }
         }
