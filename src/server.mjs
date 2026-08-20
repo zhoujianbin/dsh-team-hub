@@ -48,6 +48,13 @@ async function proxyRequest(config, req, res, { bodyOverride, injectShim = false
   const headers = {};
   for (const [key, value] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(key)) headers[key] = value;
   headers.host = upstream.host;
+  // DSH 的自定义路由（如插件注册的 /api/task-board/state）会校验 Origin。
+  // 上游只接受自己的源——网关已做认证，这里把 Origin/Referer 统一改写成上游源。
+  headers.origin = upstream.origin;
+  if (typeof headers.referer === "string") {
+    const reqOrigin = new URL(req.url, "http://local").origin;
+    headers.referer = headers.referer.replace(/^https?:\/\/[^/]+/, upstream.origin);
+  }
   const body = bodyOverride !== undefined ? bodyOverride : ["GET", "HEAD"].includes(req.method) ? undefined : await collect(req);
   const response = await fetch(config.upstream + req.url, { method: req.method, headers, body, redirect: "manual" });
   const outHeaders = {};
