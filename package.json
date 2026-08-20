@@ -37,5 +37,13 @@
   "license": "MIT",
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhoujianbin/dsh-team-hub.git"
+  },
+  "homepage": "https://github.com/zhoujianbin/dsh-team-hub#readme",
+  "bugs": {
+    "url": "https://github.com/zhoujianbin/dsh-team-hub/issues"
   }
 }
