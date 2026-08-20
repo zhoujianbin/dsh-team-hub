@@ -19,6 +19,21 @@ const ADMIN_UI = path.join(ROOT, "admin-ui");
 const COOKIE = "dsh_team_hub_session";
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "host", "content-length", "content-encoding"]);
 
+// 插件注册的宿主级 HTTP 路由：只对 admin 开放（GET/POST/WS 全拦）。
+// 精确匹配或路径边界匹配，避免误伤 /api/events.mux 等核心路由。
+const ADMIN_ONLY_ROUTE_PREFIXES = [
+  "/api/task-board",
+  "/api/dsh-ssh",
+  "/api/dsh-skill-explorer",
+  "/api/pair",
+  "/api/approvals",
+  "/api/events", // dsh-remote-web-ui 的 SSE（注意不带 .mux/.host 后缀）
+];
+
+function isAdminOnlyRoute(pathname) {
+  return ADMIN_ONLY_ROUTE_PREFIXES.some(p => pathname === p || pathname.startsWith(p + "/"));
+}
+
 function send(res, status, body, headers = {}) {
   const text = typeof body === "string" ? body : JSON.stringify(body);
   res.writeHead(status, { "content-type": typeof body === "string" ? "text/plain; charset=utf-8" : "application/json", ...headers });
@@ -251,6 +266,10 @@ export async function startServer() {
       if (url.pathname.startsWith("/__teamhub/api/")) {
         if (user.role !== "admin") return send(res, 403, { error: "admin only" });
         return handleAdminApi(context, req, res, url.pathname.slice("/__teamhub/api".length), url.searchParams);
+      }
+      if (user.role !== "admin" && isAdminOnlyRoute(url.pathname)) {
+        context.audit.write("policy.denied", { user: user.name, method: "route:" + url.pathname, reason: "插件宿主路由仅 admin 可用" });
+        return send(res, 403, { error: "admin only" });
       }
       if (url.pathname.startsWith("/api/") && req.method === "POST") return handleApiPost(context, user, req, res, url.pathname.slice("/api/".length));
       return proxyRequest(context.config, req, res, { injectShim: url.pathname === "/" || url.pathname === "/index.html" });

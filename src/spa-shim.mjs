@@ -24,6 +24,17 @@ export const USER_BAR_SHIM = `<script>
     const res = await fetch("/__teamhub/whoami", { credentials: "same-origin" });
     if (!res.ok) return;
     const me = await res.json();
+    if (me.role !== "admin") {
+      // 成员界面隐藏宿主级插件入口（后端路由已由网关拦截，这里做界面清理）
+      const HIDDEN_ENTRIES = new Set(["任务看板", "SSH", "技能中心", "移动端远程控制"]);
+      const hidePluginEntries = () => {
+        for (const btn of document.querySelectorAll("button, [role='button'], [role='treeitem']")) {
+          if (HIDDEN_ENTRIES.has((btn.textContent || "").trim())) btn.style.display = "none";
+        }
+      };
+      new MutationObserver(hidePluginEntries).observe(document.documentElement, { childList: true, subtree: true });
+      hidePluginEntries();
+    }
     const bar = document.createElement("div");
     bar.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:99999;display:flex;align-items:center;gap:8px;background:#111827;color:#fff;padding:6px 10px;border-radius:999px;font:12px -apple-system,sans-serif;box-shadow:0 2px 10px rgb(0 0 0/20%);opacity:.85";
     const label = document.createElement("span");
