@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: "https://registry.npmjs.org"
           cache: npm
       # Trusted Publishing 需要 npm >= 11.5.1
       - run: npm install -g npm@latest
