@@ -4,8 +4,12 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+  id-token: write   # npm Trusted Publishing (OIDC) 必需
+
 jobs:
-  package:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,8 +17,18 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # Trusted Publishing 需要 npm >= 11.5.1
+      - run: npm install -g npm@latest
       - run: npm ci
       - run: npm test
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG != package.json $PKG"; exit 1
+          fi
+      - run: npm publish --access public --provenance
       - run: npm pack
       - uses: actions/upload-artifact@v4
         with:
