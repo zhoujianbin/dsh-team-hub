@@ -11,6 +11,8 @@ export const MEMBER_DENY = new Set([
 export const MEMBER_PLAIN_ALLOW = new Set([
   "host.describe", "llm.providers", "llm.models",
   "dynamicCordisRunner/syncInspectManifest", "dynamicCordisRunner/inventory", "pluginInventory/list",
+  // dsh-web-ui 插件套件的只读设置描述（插件开关/皮肤状态，宿主级共享，只读安全）
+  "dsh-web-ui-settings/describe",
   "agentPreset.list", "commands/list"
 ]);
 
