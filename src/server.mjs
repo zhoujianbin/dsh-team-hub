@@ -84,7 +84,11 @@ async function proxyRequest(config, req, res, { bodyOverride, injectShim = false
 }
 
 function rpcError(res, rpcId, code, message, status = 200) {
-  send(res, status, { type: "server-response", rpcId, result: { ok: false, error: { code, message } } });
+  // DSH 客户端只认识固定的错误码集合；自定义码（如 forbidden）会让客户端
+  // 连错误信封都解析不了，直接弹 zod 原始错误。统一映射为 internal，消息保留。
+  const CLIENT_CODES = new Set(["bad-request", "cancelled", "session-not-found", "model-unavailable", "session-conflict", "workspace-not-found", "workspace-invalid-path", "internal"]);
+  const safeCode = CLIENT_CODES.has(code) ? code : "internal";
+  send(res, status, { type: "server-response", rpcId, result: { ok: false, error: { code: safeCode, message } } });
 }
 
 async function refreshOwnership(context) {
@@ -93,8 +97,10 @@ async function refreshOwnership(context) {
     for (const view of workspaces.items || []) learnWorkspace(context.config, context.ownership, view);
     const sessions = await upstreamRpc(context.config, "session.list", {});
     for (const row of sessions.items || []) learnSession(context.config, context.ownership, row.sessionId, row.cwd, null);
+    return true;
   } catch (error) {
     context.audit.write("system.ownership-refresh-failed", { error: error.message });
+    return false;
   }
 }
 
@@ -212,8 +218,24 @@ export async function startServer() {
     ownership: context.ownership,
     audit: context.audit
   });
-  await refreshOwnership(context);
-  await ensureMemberWorkspaces(context);
+  // 启动时上游可能还没就绪（比如同时重启）：后台重试直到同步成功；
+  // 之后每 5 分钟兜底重同步一次，防止事件丢失导致归属表漂移。
+  const syncOwnership = async () => {
+    if (await refreshOwnership(context)) await ensureMemberWorkspaces(context);
+  };
+  await syncOwnership();
+  if (context.ownership.workspaceOwner.size === 0) {
+    const retry = setInterval(async () => {
+      if (await refreshOwnership(context)) {
+        clearInterval(retry);
+        await ensureMemberWorkspaces(context);
+        context.audit.write("system.ownership-refresh-recovered", {});
+      }
+    }, 3000);
+    retry.unref?.();
+  }
+  const periodic = setInterval(() => { syncOwnership(); }, 5 * 60 * 1000);
+  periodic.unref?.();
 
   const server = http.createServer(async (req, res) => {
     try {
