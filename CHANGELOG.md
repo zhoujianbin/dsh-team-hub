@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8
+
+- 兼容 DSH 0.2.x 及更高版本的非 JSON 上游响应：网关和兼容性自检现在会安全处理 HTML/纯文本错误页，不再因 `response.json()` 直接崩溃。
+- 上游 RPC 失败时保留 HTTP 状态和可读错误信息，便于定位 DSH 版本、认证或启动顺序问题。
+- 发布流程继续由 `v*` Git tag 触发，并校验 tag 与 `package.json` 版本一致后通过 npm Trusted Publishing 发布。
+
 ## 0.2.7
 
 - 修复 Admin 控制台「重置密码 / 创建用户」点击后提示不显示的问题：renderUsers

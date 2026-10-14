@@ -6,7 +6,7 @@ dsh-team-hub sits between browsers and one local DSH instance. It adds login, ro
 
 [中文 README](README.md)
 
-> Status: v0.1. The first release focuses on secure shared access. Team knowledge/asset evolution is planned for v0.2.
+> Status: v0.2.8. Compatible with DSH 0.2.x and later; this release hardens upstream RPC/error handling for newer DSH responses while retaining secure shared access and workspace isolation.
 
 ## Why
 
@@ -120,6 +120,8 @@ shared/repo
 These are the base shared locations available to member agents. Publishing/versioning/injecting reusable team assets is planned for v0.2.
 
 ## Upgrading DSH
+
+Version 0.2.8 specifically hardens compatibility with DSH 0.2.x and later. Newer DSH builds can return HTML or plain-text error pages for unauthenticated, starting, or plugin routes instead of JSON; the gateway now converts those responses into readable RPC errors instead of crashing on JSON parsing.
 
 DSH RPC and event protocols are internal and may change. After upgrading DSH:
 

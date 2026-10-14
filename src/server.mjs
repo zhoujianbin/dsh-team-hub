@@ -143,7 +143,12 @@ async function handleApiPost(context, user, req, res, method) {
     headers: { "content-type": "application/json", host: upstream.host },
     body: JSON.stringify({ ...message, payload: guard.payload })
   });
-  const body = await response.json();
+  const text = await response.text();
+  let body;
+  try { body = JSON.parse(text); } catch {
+    context.audit.write("upstream.invalid-response", { user: user.name, method, status: response.status });
+    return rpcError(res, rpcId, "internal", `upstream returned non-JSON (${response.status})`);
+  }
   if (body.result?.ok) body.result.value = filterMemberResponse({ ownership: context.ownership, user, method, value: body.result.value });
   context.audit.write("policy.allowed", { user: user.name, method });
   send(res, response.status, body, { "content-type": "application/json" });

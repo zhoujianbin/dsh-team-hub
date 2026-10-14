@@ -7,7 +7,12 @@ export async function upstreamRpc(config, method, payload) {
     headers: { "content-type": "application/json", host: url.host },
     body: JSON.stringify({ type: "client-request", rpcId: crypto.randomUUID(), method, payload })
   });
-  const body = await response.json();
-  if (!body.result?.ok) throw new Error(`${method}: ${body.result?.error?.message || response.status}`);
+  const text = await response.text();
+  let body;
+  try { body = JSON.parse(text); } catch {
+    const detail = text.trim() || response.statusText || response.status;
+    throw new Error(`${method}: upstream returned non-JSON (${response.status}): ${detail}`);
+  }
+  if (!response.ok || !body.result?.ok) throw new Error(`${method}: ${body.result?.error?.message || response.status}`);
   return body.result.value;
 }
