@@ -27,9 +27,17 @@ export const USER_BAR_SHIM = `<script>
     if (me.role !== "admin") {
       // 成员界面隐藏宿主级插件入口（后端路由已由网关拦截，这里做界面清理）
       const HIDDEN_ENTRIES = new Set(["任务看板", "SSH", "技能中心", "移动端远程控制"]);
+      const HOST_PLUGIN_LABELS = new Set(["Plugins", "Task Board", "Skill Center", "SSH", "Remote access", "Add workspace", "Open usage statistics settings", "Collapse the usage card"]);
+      // The member gateway does not expose Host plugin inventory or preset editing.
+      const HIDDEN_SETTINGS_TABS = new Set(["Models", "Built-in plugins", "Agent presets", "Plugin Market", "Web Plugins", "Usage Statistics"]);
       const hidePluginEntries = () => {
         for (const btn of document.querySelectorAll("button, [role='button'], [role='treeitem']")) {
-          if (HIDDEN_ENTRIES.has((btn.textContent || "").trim())) btn.style.display = "none";
+          if (HIDDEN_ENTRIES.has((btn.textContent || "").trim()) || HOST_PLUGIN_LABELS.has(btn.getAttribute("aria-label")) ||
+              HIDDEN_SETTINGS_TABS.has((btn.textContent || "").trim())) btn.style.display = "none";
+          if (btn.getAttribute("aria-label") === "Open usage statistics settings") {
+            const card = btn.parentElement?.parentElement;
+            if (card?.textContent?.includes("Usage Statistics")) card.style.display = "none";
+          }
         }
       };
       new MutationObserver(hidePluginEntries).observe(document.documentElement, { childList: true, subtree: true });

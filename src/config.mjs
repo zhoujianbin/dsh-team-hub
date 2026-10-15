@@ -17,6 +17,7 @@ export function defaultConfig(home = defaultHome()) {
     // 可选的 dsh 安装目录（@deepseek-ai/dsh）。缺省时自动探测：
     // npm root -g → 当前目录向上 → 常见路径。用于远程设置补丁。
     dshRoot: null,
+    dshWebLog: null,
     workspaceRoot: path.join(home, "workspaces"),
     sharedRoot: path.join(home, "shared"),
     users: []
@@ -45,6 +46,9 @@ export function loadConfig(home = defaultHome()) {
 export function validateConfig(config) {
   if (!Number.isInteger(config.listenPort) || config.listenPort <= 0 || config.listenPort > 65535) throw new Error("listenPort 必须是 1-65535");
   if (!URL.canParse(config.upstream)) throw new Error("upstream 不是合法 URL");
+  const upstream = new URL(config.upstream);
+  if (upstream.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(upstream.hostname) || upstream.username || upstream.password || upstream.pathname !== "/" || upstream.search || upstream.hash) throw new Error("upstream 必须是无凭据、路径和查询参数的本机 HTTP 地址");
+  if (config.dshWebLog !== null && config.dshWebLog !== undefined && (typeof config.dshWebLog !== "string" || !path.isAbsolute(config.dshWebLog))) throw new Error("dshWebLog 必须是绝对路径或 null");
   if (!Array.isArray(config.users)) throw new Error("users 必须是数组");
   for (const user of config.users) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,31}$/.test(user.name || "")) throw new Error(`非法用户名：${user.name}`);

@@ -41,6 +41,34 @@ test("findDshBundleFile finds hoisted bundle by walking up", () => {
   assert.equal(found, file);
 });
 
+test("DSH 0.2 selector is patched once, verified and safely rolled back", () => {
+  const { dshRoot, file } = makeFakeDsh();
+  const original = 'const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";\n';
+  fs.writeFileSync(file, original);
+  assert.equal(settingsPatchStatus(dshRoot), "unpatched");
+  assert.equal(applySettingsPatch(dshRoot), "applied");
+  assert.equal(fs.readFileSync(file, "utf8"), 'const persistence = "host";\n');
+  assert.equal(settingsPatchStatus(dshRoot), "patched");
+  assert.equal(applySettingsPatch(dshRoot), "unchanged");
+  assert.equal(rollbackSettingsPatch(dshRoot), "rolled-back");
+  assert.equal(fs.readFileSync(file, "utf8"), original);
+});
+
+test("unknown and repeated selectors never claim patched or mutate files", () => {
+  const { dshRoot, file } = makeFakeDsh();
+  for (const original of [
+    'const persistence = ctx.remote.$host.isLoopback ? "memory" : "host";',
+    'const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";\nconst persistence = ctx.remote.$host.isLoopback ? "host" : "memory";',
+    'const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";\n' + SETTINGS_FROM,
+    'const unrelated = "host";'
+  ]) {
+    fs.writeFileSync(file, original);
+    assert.equal(settingsPatchStatus(dshRoot), "unpatched");
+    assert.equal(applySettingsPatch(dshRoot), "missing");
+    assert.equal(fs.readFileSync(file, "utf8"), original);
+  }
+});
+
 test("applySettingsPatch replaces all occurrences and is idempotent", () => {
   const { dshRoot, file, original } = makeFakeDsh();
   assert.equal(settingsPatchStatus(dshRoot), "unpatched");

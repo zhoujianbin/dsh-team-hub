@@ -13,7 +13,10 @@ import { upstreamRpc } from "./upstream.mjs";
 import { findDshRoot, applySettingsPatch, settingsPatchStatus } from "./patch.mjs";
 import { filterHostFrame, filterMuxFrame, isAllowedClientFrame } from "./ws-filter.mjs";
 import { injectSpaShim } from "./spa-shim.mjs";
-import { compatibilityReport } from "./compat.mjs";
+import { compatibilityReport, workspaceBaseline } from "./compat.mjs";
+import { DshBrowserAuth } from "./dsh-browser-auth.mjs";
+import { memberWelcomeSettings } from "./member-settings.mjs";
+import { guardRemoteClientFrame, filterRemoteServerFrame, consumeMemberEventResult, settleMemberEventResult } from "./remote-stream-policy.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const ADMIN_UI = path.join(ROOT, "admin-ui");
@@ -31,6 +34,19 @@ const ADMIN_ONLY_ROUTE_PREFIXES = [
   "/api/events", // dsh-remote-web-ui 的 SSE（注意不带 .mux/.host 后缀）
 ];
 
+function isMemberStaticRoute(pathname, search = "") {
+  // DSH 0.2 preloads client plugins via /plugins/??<module>/client.js&rev=<hash>.
+  // This is a static client bundle, not a Host plugin API; restrict the full
+  // URL to module names and revision hashes before forwarding it.
+  if (pathname === "/plugins/" && /^\?\?[A-Za-z0-9@._/-]+\/client\.js(?:&[A-Za-z0-9@._/,-]+\/client\.js)*&rev=[a-f0-9]{12}$/.test(search) &&
+      !search.includes("..")) return true;
+  return pathname === "/" || pathname === "/index.html" || pathname === "/favicon.ico" || pathname === "/favicon.svg" || pathname === "/favicon-dark.svg" || pathname === "/manifest.webmanifest"
+    || /^\/assets\/[A-Za-z0-9_./-]+\.(?:js|css|png|jpe?g|webp|svg|ico|woff2?|ttf|map)$/.test(pathname)
+      && !pathname.split("/").includes("..")
+    || /^\/plugins\/[A-Za-z0-9_./-]+\.(?:js|css|json|png|jpe?g|webp|svg|ico|woff2?|ttf|map)$/.test(pathname)
+      && !pathname.split("/").includes("..");
+}
+
 function isAdminOnlyRoute(pathname) {
   return ADMIN_ONLY_ROUTE_PREFIXES.some(p => pathname === p || pathname.startsWith(p + "/"));
 }
@@ -43,38 +59,59 @@ function send(res, status, body, headers = {}) {
 
 async function collect(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 8 * 1024 * 1024) throw new Error("request exceeds 8 MiB");
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks);
+}
+
+function safeNext(next) {
+  return typeof next === "string" && next.startsWith("/") && !next.startsWith("//") &&
+    !next.includes("\\") && !/[\x00-\x1f\x7f]/.test(next)
+    ? next : "/";
+}
+function escapeHtmlAttribute(value) {
+  return value.replaceAll("&", "&amp;").replaceAll("\"", "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function loginPage(next = "/", error = "") {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>dsh-team-hub 登录</title>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f3f4f6;display:grid;place-items:center;min-height:100vh}form{background:white;padding:32px;border-radius:14px;box-shadow:0 8px 30px rgb(0 0 0/8%);display:grid;gap:14px;width:320px}input,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #d1d5db}button{background:#111827;color:white;border:0}.error{color:#b91c1c}</style></head>
-<body><form method="post" action="/login"><h1>dsh-team-hub</h1><input type="hidden" name="next" value="${next}"><input name="username" placeholder="用户名" autocomplete="username" required><input name="password" type="password" placeholder="密码" autocomplete="current-password" required>${error ? `<p class="error">${error}</p>` : ""}<button>登录</button></form></body></html>`;
+<body><form method="post" action="/login"><h1>dsh-team-hub</h1><input type="hidden" name="next" value="${escapeHtmlAttribute(safeNext(next))}"><input name="username" placeholder="用户名" autocomplete="username" required><input name="password" type="password" placeholder="密码" autocomplete="current-password" required>${error ? `<p class="error">${escapeHtmlAttribute(error)}</p>` : ""}<button>登录</button></form></body></html>`;
 }
 
 function changePasswordPage(error = "") {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>修改密码</title>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f3f4f6;display:grid;place-items:center;min-height:100vh}form{background:white;padding:32px;border-radius:14px;box-shadow:0 8px 30px rgb(0 0 0/8%);display:grid;gap:14px;width:340px}input,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #d1d5db}button{background:#111827;color:white;border:0}.error{color:#b91c1c}</style></head>
-<body><form method="post" action="/change-password"><h1>首次登录，请修改密码</h1><input name="current" type="password" placeholder="当前密码" required><input name="next" type="password" placeholder="新密码（至少 8 位）" required>${error ? `<p class="error">${error}</p>` : ""}<button>保存并继续</button></form></body></html>`;
+<body><form method="post" action="/change-password"><h1>首次登录，请修改密码</h1><input name="current" type="password" placeholder="当前密码" required><input name="next" type="password" placeholder="新密码（至少 8 位）" required>${error ? `<p class="error">${escapeHtmlAttribute(error)}</p>` : ""}<button>保存并继续</button></form></body></html>`;
 }
 
-async function proxyRequest(config, req, res, { bodyOverride, injectShim = false } = {}) {
+async function proxyRequest(context, req, res, { bodyOverride, injectShim = false } = {}) {
+  const config = context.config;
   const upstream = new URL(config.upstream);
+  const upstreamUrl = new URL(req.url, config.upstream);
+  if (upstreamUrl.origin !== upstream.origin || upstreamUrl.searchParams.has("token") || (injectShim && upstreamUrl.search)) return send(res, 400, "invalid upstream URL");
   const headers = {};
-  for (const [key, value] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(key)) headers[key] = value;
+  for (const [key, value] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(key) && !["cookie", "authorization", "x-dsh-web-token"].includes(key)) headers[key] = value;
   headers.host = upstream.host;
+  const cookie = await context.browserAuth.cookieHeader();
+  if (cookie) headers.cookie = cookie;
   // DSH 的自定义路由（如插件注册的 /api/task-board/state）会校验 Origin。
   // 上游只接受自己的源——网关已做认证，这里把 Origin/Referer 统一改写成上游源。
   headers.origin = upstream.origin;
-  if (typeof headers.referer === "string") {
-    const reqOrigin = new URL(req.url, "http://local").origin;
-    headers.referer = headers.referer.replace(/^https?:\/\/[^/]+/, upstream.origin);
-  }
+  delete headers.referer;
   const body = bodyOverride !== undefined ? bodyOverride : ["GET", "HEAD"].includes(req.method) ? undefined : await collect(req);
-  const response = await fetch(config.upstream + req.url, { method: req.method, headers, body, redirect: "manual" });
+  const response = await fetch(upstreamUrl, { method: req.method, headers, body, redirect: "manual" });
+  if (response.status === 401) context.browserAuth.invalidate();
   const outHeaders = {};
-  for (const [key, value] of response.headers.entries()) if (!HOP_BY_HOP.has(key)) outHeaders[key] = value;
+  for (const [key, value] of response.headers.entries()) if (!HOP_BY_HOP.has(key) && key !== "set-cookie") outHeaders[key] = value;
+  if (outHeaders.location) {
+    const target = new URL(outHeaders.location, upstream);
+    if (!outHeaders.location.startsWith("/") || outHeaders.location.startsWith("//") || target.origin !== upstream.origin || target.searchParams.has("token")) return send(res, 502, "unsafe upstream redirect");
+  }
   let out = Buffer.from(await response.arrayBuffer());
   if (injectShim && (outHeaders["content-type"] || "").includes("text/html")) {
     out = Buffer.from(injectSpaShim(out.toString("utf8")));
@@ -89,15 +126,16 @@ function rpcError(res, rpcId, code, message, status = 200) {
   // 连错误信封都解析不了，直接弹 zod 原始错误。统一映射为 internal，消息保留。
   const CLIENT_CODES = new Set(["bad-request", "cancelled", "session-not-found", "model-unavailable", "session-conflict", "workspace-not-found", "workspace-invalid-path", "internal"]);
   const safeCode = CLIENT_CODES.has(code) ? code : "internal";
-  send(res, status, { type: "server-response", rpcId, result: { ok: false, error: { code: safeCode, message } } });
+  send(res, status, { type: "server-response", rpcId, result: { ok: false, error: { code: safeCode, message, details: {} } } });
 }
 
 async function refreshOwnership(context) {
   try {
-    const workspaces = await upstreamRpc(context.config, "workspace.list", {});
-    for (const view of workspaces.items || []) learnWorkspace(context.config, context.ownership, view);
-    const sessions = await upstreamRpc(context.config, "session.list", {});
-    for (const row of sessions.items || []) learnSession(context.config, context.ownership, row.sessionId, row.cwd, null);
+    const workspaces = await workspaceBaseline(context.config);
+    const sessions = await upstreamRpc(context.config, "session/list", { args: { _request: {} } });
+    if (!Array.isArray(sessions?.items)) throw new Error("session/list returned invalid inventory");
+    for (const row of sessions.items) learnSession(context.config, context.ownership, row.sessionId, row.cwd, null);
+    for (const view of workspaces.items) learnWorkspace(context.config, context.ownership, view);
     return true;
   } catch (error) {
     context.audit.write("system.ownership-refresh-failed", { error: error.message });
@@ -113,10 +151,10 @@ async function ensureMemberWorkspaces(context) {
     const existing = [...context.ownership.workspaceOwner.entries()].find(([, owner]) => owner === user.name);
     if (existing) continue;
     try {
-      const created = await upstreamRpc(context.config, "workspace.create", { path: root });
+      const created = await upstreamRpc(context.config, "workspace/create", { args: { request: { path: root } } });
       learnWorkspace(context.config, context.ownership, created.workspace);
       if (created.workspace.title !== user.name) {
-        const renamed = await upstreamRpc(context.config, "workspace.rename", { workspaceId: created.workspace.workspaceId, title: user.name });
+        const renamed = await upstreamRpc(context.config, "workspace/rename", { args: { request: { workspaceId: created.workspace.workspaceId, title: user.name } } });
         learnWorkspace(context.config, context.ownership, renamed.workspace);
       }
       context.audit.write("workspace.created", { user: user.name });
@@ -130,28 +168,96 @@ async function handleApiPost(context, user, req, res, method) {
   const raw = await collect(req);
   let message;
   try { message = JSON.parse(raw.toString("utf8")); } catch { return rpcError(res, null, "bad-request", "invalid JSON", 400); }
+  if (!message || typeof message !== "object" || Array.isArray(message)) return rpcError(res, null, "bad-request", "invalid RPC envelope", 400);
   const { rpcId, payload } = message;
-  if (user.role === "admin") return proxyRequest(context.config, req, res, { bodyOverride: raw });
-  const guard = guardMemberRequest({ config: context.config, ownership: context.ownership, user, method, payload });
+  if (user.role === "admin") return proxyRequest(context, req, res, { bodyOverride: raw });
+  // DSH 0.2 RPC methods use namespace/method and a validated structured args payload.
+  if (message.type !== "client-request" || typeof rpcId !== "string" || !rpcId || rpcId.length > 128 ||
+      message.method !== method || !(method === "$events/result" || new RegExp("^[A-Za-z0-9_-]+/[A-Za-z0-9_-]+$").test(method)) ||
+      Object.keys(message).sort().join() !== "method,payload,rpcId,type")
+    return rpcError(res, rpcId, "bad-request", "invalid DSH RPC envelope", 400);
+  if (method === "settings/describe" || method === "settings/mutate") {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || Object.keys(payload).length !== 1 ||
+        !payload.args || typeof payload.args !== "object" || Array.isArray(payload.args))
+      return rpcError(res, rpcId, "bad-request", "invalid settings args", 400);
+    if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)
+      return rpcError(res, rpcId, "forbidden", "cross-origin settings request denied");
+    if (method === "settings/describe") {
+      if (Object.keys(payload.args).length) return rpcError(res, rpcId, "forbidden", "settings describe accepts no args");
+      return send(res, 200, { type: "server-response", rpcId, result: { ok: true, value: context.memberSettings.describe(user.name) } });
+    }
+    try {
+      const value = context.memberSettings.mutate(user.name, payload.args);
+      if (!value) return rpcError(res, rpcId, "forbidden", "member settings mutation denied");
+      return send(res, 200, { type: "server-response", rpcId, result: { ok: true, value } });
+    } catch { return rpcError(res, rpcId, "internal", "member preference could not be saved", 500); }
+  }
+  let guard;
+  let eventDecision;
+  if (method === "$events/result") {
+    if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)
+      return rpcError(res, rpcId, "forbidden", "cross-origin event result denied");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+        Object.keys(payload).length !== 1 || !payload.args || typeof payload.args !== "object")
+      return rpcError(res, rpcId, "bad-request", "invalid event result", 400);
+    const candidate = context.eventClients.get(payload.args.clientId);
+    if (!candidate || candidate.user !== user.name || candidate.sessionToken !== parseCookies(req)[COOKIE] ||
+        candidate.socket.readyState !== WebSocket.OPEN)
+      return rpcError(res, rpcId, "forbidden", "event result not delivered");
+    const authorized = consumeMemberEventResult({ ownership: context.ownership, user, streams: candidate.streams, frame: payload.args });
+    if (!authorized) return rpcError(res, rpcId, "forbidden", "event result not delivered");
+    eventDecision = { streams: candidate.streams, frame: authorized };
+    guard = { ok: true, payload: { args: authorized } };
+  } else guard = guardMemberRequest({ config: context.config, ownership: context.ownership, user, method, payload });
   if (!guard.ok) {
     context.audit.write("policy.denied", { user: user.name, method, reason: guard.message });
     return rpcError(res, rpcId, "forbidden", guard.message);
   }
-  const upstream = new URL(context.config.upstream);
-  const response = await fetch(`${context.config.upstream}/api/${method}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", host: upstream.host },
-    body: JSON.stringify({ ...message, payload: guard.payload })
-  });
-  const text = await response.text();
-  let body;
-  try { body = JSON.parse(text); } catch {
-    context.audit.write("upstream.invalid-response", { user: user.name, method, status: response.status });
-    return rpcError(res, rpcId, "internal", `upstream returned non-JSON (${response.status})`);
+  try {
+    const upstream = new URL(context.config.upstream);
+    const dshCookie = await context.browserAuth.cookieHeader();
+    const response = await fetch(`${context.config.upstream}/api/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", host: upstream.host, ...(dshCookie ? { cookie: dshCookie } : {}) },
+      body: JSON.stringify({ ...message, payload: guard.payload }),
+      redirect: "error", signal: AbortSignal.timeout(12000)
+    });
+    if (response.status === 401) context.browserAuth.invalidate();
+    const text = await response.text();
+    let body;
+    try { body = JSON.parse(text); } catch {
+      context.audit.write("upstream.invalid-response", { user: user.name, method, status: response.status });
+      return rpcError(res, rpcId, "internal", `upstream returned non-JSON (${response.status})`);
+    }
+    if (!body || body.type !== "server-response" || body.rpcId !== rpcId || typeof body.result?.ok !== "boolean") return rpcError(res, rpcId, "internal", "invalid upstream RPC envelope", 502);
+    if (body.result.ok) {
+      if (method === "$events/result") {
+        if (body.result.value !== undefined) return rpcError(res, rpcId, "internal", "invalid event acknowledgment", 502);
+      } else {
+        try { body.result.value = filterMemberResponse({ ownership: context.ownership, user, method, value: body.result.value }); }
+        catch { return rpcError(res, rpcId, "internal", "invalid upstream RPC result", 502); }
+      }
+    } else {
+      const error = body.result.error;
+      if (!error || typeof error.code !== "string" || typeof error.message !== "string") return rpcError(res, rpcId, "internal", "invalid upstream RPC error", 502);
+      // Upstream errors may echo the operator home, paths or credentials. Members
+      // receive a generic failure with a known DSH wire code.
+      body.result.error = { code: "internal", message: "request failed", details: {} };
+    }
+    if (eventDecision && body.result.ok && response.ok) {
+      settleMemberEventResult({ ...eventDecision, accepted: true });
+      eventDecision = null;
+    }
+    context.audit.write("policy.allowed", { user: user.name, method });
+    send(res, response.status, { type: "server-response", rpcId, result: body.result.ok
+      ? { ok: true, value: body.result.value } : { ok: false, error: body.result.error } }, { "content-type": "application/json" });
+  } catch {
+    // Network/timeouts and invalid Host responses are not safe to echo, and
+    // browser RPC callers still need a protocol-shaped error response.
+    return rpcError(res, rpcId, "internal", "upstream unavailable", 502);
+  } finally {
+    if (eventDecision) settleMemberEventResult({ ...eventDecision, accepted: false });
   }
-  if (body.result?.ok) body.result.value = filterMemberResponse({ ownership: context.ownership, user, method, value: body.result.value });
-  context.audit.write("policy.allowed", { user: user.name, method });
-  send(res, response.status, body, { "content-type": "application/json" });
 }
 
 async function handleAdminApi(context, req, res, pathname, query) {
@@ -200,7 +306,10 @@ export async function startServer() {
   const context = {
     home,
     config,
+    browserAuth: new DshBrowserAuth(config),
     ownership: createOwnership(),
+    memberSettings: memberWelcomeSettings(home),
+    eventClients: new Map(),
     audit: new AuditLog(home),
     adminApi: null
   };
@@ -212,6 +321,7 @@ export async function startServer() {
       if (mtime === configMtime) return;
       configMtime = mtime;
       context.config = loadConfig(home).config;
+      context.browserAuth = new DshBrowserAuth(context.config);
       context.audit.write("system.config-reloaded", {});
       // 新增的成员需要就地建工作区，否则要等下次重启
       if (!ensuring) {
@@ -267,6 +377,7 @@ export async function startServer() {
     try {
       reloadConfigIfChanged();
       const url = new URL(req.url, "http://local");
+      if (url.searchParams.has("token")) return send(res, 400, { error: "token query not accepted" });
       const cookies = parseCookies(req);
       const session = resolveSession(home, cookies[COOKIE]);
       const user = session && context.config.users.find(u => u.name === session.username && (u.status || "active") === "active");
@@ -281,7 +392,7 @@ export async function startServer() {
         }
         const issued = issueSession(home, found.name);
         context.audit.write("auth.login", { user: found.name });
-        const next = found.mustChangePassword ? "/change-password" : String(form.get("next") || "/");
+        const next = found.mustChangePassword ? "/change-password" : safeNext(form.get("next"));
         return send(res, 302, "", { location: next, "set-cookie": `${COOKIE}=${encodeURIComponent(issued.token)}; Path=/; HttpOnly; SameSite=Lax` });
       }
       if (url.pathname === "/logout") {
@@ -322,15 +433,17 @@ export async function startServer() {
         context.audit.write("policy.denied", { user: user.name, method: "route:" + url.pathname, reason: "插件宿主路由仅 admin 可用" });
         return send(res, 403, { error: "admin only" });
       }
-      if (url.pathname.startsWith("/api/") && req.method === "POST") return handleApiPost(context, user, req, res, url.pathname.slice("/api/".length));
-      return proxyRequest(context.config, req, res, { injectShim: url.pathname === "/" || url.pathname === "/index.html" });
+      if (user.role !== "admin" && url.pathname.startsWith("/api/") && req.method === "POST") return handleApiPost(context, user, req, res, url.pathname.slice("/api/".length));
+      if (user.role !== "admin" && !["GET", "HEAD"].includes(req.method)) return send(res, 403, { error: "member route denied" });
+      if (user.role !== "admin" && !isMemberStaticRoute(url.pathname, url.search)) return send(res, 403, { error: "member route denied" });
+      return proxyRequest(context, req, res, { injectShim: url.pathname === "/" || url.pathname === "/index.html" });
     } catch (error) {
-      context.audit.write("system.request-error", { error: error.message });
-      send(res, 500, { error: error.message });
+      context.audit.write("system.request-error", { error: error?.name || "Error" });
+      send(res, 502, { error: "upstream request failed" });
     }
   });
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   server.on("upgrade", async (req, socket, head) => {
     reloadConfigIfChanged();
     const cookies = parseCookies(req);
@@ -338,59 +451,112 @@ export async function startServer() {
     const user = session && context.config.users.find(u => u.name === session.username && (u.status || "active") === "active");
     if (!user) { socket.destroy(); return; }
     const url = new URL(req.url, "http://local");
-    const stream = url.pathname === "/api/events.mux" ? "mux" : url.pathname === "/api/events.host" ? "host" : null;
-    if (!stream) { socket.destroy(); return; }
+    if (url.search || url.hash) { socket.destroy(); return; }
+    const stream = url.pathname === "/api/events.mux" ? "mux" : url.pathname === "/api/events.host" ? "host" : url.pathname === "/api/remote.mux" ? "remote" : null;
+    if (!stream || (user.role !== "admin" && stream !== "remote")) { socket.destroy(); return; }
+    if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) { socket.destroy(); return; }
     if (user.mustChangePassword) { socket.destroy(); return; }
+    let dshCookie;
+    try { dshCookie = await context.browserAuth.cookieHeader(); } catch { socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, downstream => {
       const upstreamUrl = new URL(context.config.upstream);
       upstreamUrl.protocol = upstreamUrl.protocol === "https:" ? "wss:" : "ws:";
       upstreamUrl.pathname = url.pathname;
-      const upstream = new WebSocket(upstreamUrl);
+      const upstream = new WebSocket(upstreamUrl, { headers: { host: upstreamUrl.host, origin: context.config.upstream, ...(dshCookie ? { cookie: dshCookie } : {}) } });
       const pending = [];
       const answerable = new Set();
+      const remoteStreams = new Map();
+      const registeredClients = new Set();
+      const clearClients = () => {
+        for (const id of registeredClients) {
+          if (context.eventClients.get(id)?.socket === downstream) context.eventClients.delete(id);
+        }
+        registeredClients.clear();
+        remoteStreams.clear();
+      };
       upstream.on("open", () => pending.splice(0).forEach(data => upstream.send(data)));
       // 注意：DSH 协议全部使用文本帧。ws 库 send(Buffer) 会发二进制帧，
       // DSH 客户端会把二进制帧当作畸形帧丢弃——必须按原始帧类型转发。
+      const sessionStillActive = () => {
+        reloadConfigIfChanged();
+        const current = resolveSession(home, cookies[COOKIE]);
+        return current?.username === user.name && context.config.users.some(account =>
+          account.name === user.name && account.role === user.role && (account.status || "active") === "active" && !account.mustChangePassword);
+      };
       downstream.on("message", (data, isBinary) => {
+        if (!sessionStillActive()) { clearClients(); downstream.close(1008); return; }
+        let memberFrame;
         if (user.role === "member") {
           if (isBinary) return;
           try {
             const frame = JSON.parse(data.toString("utf8"));
-            if (!isAllowedClientFrame({ ownership: context.ownership, user, frame, answerable })) {
+            const allowed = stream === "remote"
+              ? guardRemoteClientFrame({ ownership: context.ownership, user, streams: remoteStreams, frame })
+              : isAllowedClientFrame({ ownership: context.ownership, user, frame, answerable });
+            if (!allowed) {
               context.audit.write("ws.client-frame-denied", { user: user.name, stream });
               return;
             }
-          } catch { return; }
-        }
-        const out = isBinary ? data : data.toString("utf8");
-        if (upstream.readyState === WebSocket.OPEN) upstream.send(out); else pending.push(out);
-      });
-      upstream.on("message", (data, isBinary) => {
-        if (user.role === "member") {
-          if (isBinary) return;
-          let frame;
-          try {
-            frame = JSON.parse(data.toString("utf8"));
-            const allowed = stream === "mux"
-              ? filterMuxFrame({ ownership: context.ownership, user, frame, answerable, onUnknown: type => context.audit.write("ws.unknown-mux-frame", { type }) })
-              : filterHostFrame({ config: context.config, ownership: context.ownership, user, frame, onUnknown: type => context.audit.write("ws.unknown-host-frame", { type }) });
-            if (!allowed) {
-              context.audit.write("ws.frame-dropped", {
-                user: user.name, stream,
-                frameType: frame?.payload?.type || "unknown",
-                sessionId: frame?.payload?.sessionId || "",
-                mappedOwner: frame?.payload?.sessionId ? (context.ownership.sessionOwner.get(frame.payload.sessionId) || "unknown") : ""
-              });
-              return;
+            memberFrame = stream === "remote" ? allowed : frame;
+            if (stream === "remote" && frame.type === "cancel") {
+              for (const id of registeredClients) {
+                if (![...remoteStreams.values()].some(item => item.clientId === id)) {
+                  if (context.eventClients.get(id)?.socket === downstream) context.eventClients.delete(id);
+                  registeredClients.delete(id);
+                }
+              }
             }
           } catch { return; }
-          downstream.send(JSON.stringify(frame));
+        }
+        const out = user.role === "member" ? JSON.stringify(memberFrame) : isBinary ? data : data.toString("utf8");
+        if (upstream.readyState === WebSocket.OPEN) upstream.send(out);
+        else if (upstream.readyState === WebSocket.CONNECTING && pending.length < 32) pending.push(out);
+        else downstream.close();
+      });
+      upstream.on("message", (data, isBinary) => {
+        if (!sessionStillActive()) { clearClients(); downstream.close(1008); return; }
+        if (user.role === "member") {
+          if (isBinary) return;
+          let frame, allowed;
+          try {
+            frame = JSON.parse(data.toString("utf8"));
+            allowed = stream === "remote"
+              ? filterRemoteServerFrame({ config: context.config, ownership: context.ownership, user, streams: remoteStreams, frame })
+              : stream === "mux"
+                ? filterMuxFrame({ ownership: context.ownership, user, frame, answerable, onUnknown: type => context.audit.write("ws.unknown-mux-frame", { type }) })
+                : filterHostFrame({ config: context.config, ownership: context.ownership, user, frame, onUnknown: type => context.audit.write("ws.unknown-host-frame", { type }) });
+            if (!allowed) {
+              context.audit.write("ws.frame-dropped", { user: user.name, stream });
+              return;
+            }
+          } catch (error) {
+            context.audit.write("ws.frame-filter-error", { user: user.name, stream });
+            downstream.close(1008);
+            return;
+          }
+          if (stream === "remote" && allowed.value?.type === "ready") {
+            const clientId = allowed.value.clientId;
+            if (context.eventClients.has(clientId)) { downstream.close(1008); return; }
+            context.eventClients.set(clientId, { user: user.name, sessionToken: cookies[COOKIE], socket: downstream, streams: remoteStreams });
+            registeredClients.add(clientId);
+          }
+          if (stream === "remote" && (allowed.type === "end" || allowed.type === "error")) {
+            for (const id of registeredClients) {
+              if (![...remoteStreams.values()].some(item => item.clientId === id)) {
+                if (context.eventClients.get(id)?.socket === downstream) context.eventClients.delete(id);
+                registeredClients.delete(id);
+              }
+            }
+          }
+          downstream.send(JSON.stringify(stream === "remote" ? allowed : frame));
           return;
         }
         downstream.send(isBinary ? data : data.toString("utf8"));
       });
-      downstream.on("close", () => upstream.close());
-      upstream.on("close", () => downstream.close());
+      downstream.on("close", () => { clearClients(); upstream.close(); });
+      upstream.on("close", () => { clearClients(); downstream.close(); });
+      upstream.on("error", () => downstream.close());
+      upstream.on("unexpected-response", (_request, response) => { response.resume(); downstream.close(); });
     });
   });
 

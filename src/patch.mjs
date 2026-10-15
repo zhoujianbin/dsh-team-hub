@@ -10,8 +10,9 @@
 // 网关已把 Host/Origin 改写为上游源，主机侧栅栏对经网关的流量放行，
 // 所以只需替换客户端这一处三元表达式。
 //
-// 信任边界：只有通过网关密码门登录的浏览器能写设置；本补丁只改持久化模式，
-// 不绕过任何认证。网关每次启动自动应用（幂等），dsh 升级覆盖文件后重启网关自动重打。
+// 信任边界：补丁只改共享客户端的持久化选择，不能作为成员设置的授权。
+// Member 对宿主设置的读取和写入必须由网关分别做字段投影和默认拒绝。
+// 网关启动时只识别已知表达式，其他 DSH 版本保持原样。
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -24,7 +25,29 @@ const BAK_META_SUFFIX = ".sha256-teamhub";
 const SETTINGS_PACKAGE = "@deepseek-ai/dsh-client-ui-settings";
 const SETTINGS_FILE = path.join("lib", "client.js");
 const SETTINGS_FROM = 'connection.isLoopback ? "host" : "memory"';
+const SETTINGS_FROM_02 = 'const persistence = ctx.remote.$host.isLoopback ? "host" : "memory";';
+const SETTINGS_TO_02 = 'const persistence = "host";';
 const SETTINGS_TO = '"host"';
+
+function patchVariant(source) {
+  const legacy = source.split(SETTINGS_FROM).length - 1;
+  const modern = source.split(SETTINGS_FROM_02).length - 1;
+  if (legacy && !modern) return "legacy";
+  if (modern === 1 && !legacy) return "0.2";
+  return null;
+}
+
+function verifiedPatched(source, backup, meta) {
+  try {
+    const original = readFileSync(backup, "utf8");
+    const hashes = JSON.parse(readFileSync(meta, "utf8"));
+    if (hashes.originalSha !== contentHash(original) || hashes.patchedSha !== contentHash(source)) return false;
+    const variant = patchVariant(original);
+    const expected = variant === "0.2" ? original.replace(SETTINGS_FROM_02, SETTINGS_TO_02)
+      : variant === "legacy" ? original.split(SETTINGS_FROM).join(SETTINGS_TO) : null;
+    return expected === source;
+  } catch { return false; }
+}
 
 function contentHash(content) {
   return createHash("sha256").update(content).digest("hex");
@@ -98,7 +121,7 @@ export function settingsPatchStatus(dshRoot) {
   if (file === null) return "missing";
   try {
     const s = readFileSync(file, "utf8");
-    return !s.includes(SETTINGS_FROM) && s.includes(SETTINGS_TO) ? "patched" : "unpatched";
+    return verifiedPatched(s, file + BAK_SUFFIX, backupMetaPath(file)) ? "patched" : "unpatched";
   } catch {
     return "missing";
   }
@@ -109,13 +132,13 @@ export function applySettingsPatch(dshRoot) {
   const file = findDshBundleFile(dshRoot, SETTINGS_PACKAGE, SETTINGS_FILE);
   if (file === null) return "missing";
   const s = readFileSync(file, "utf8");
-  if (!s.includes(SETTINGS_FROM)) {
-    // 已打过（或上游已改行为）→ 无需再动
-    return s.includes(SETTINGS_TO) ? "unchanged" : "missing";
-  }
-  // 注意 rc.8+ 该三元可能出现多处（SettingsScopeController + SettingsDescribeMirror），
-  // 必须全量替换，不能只替换第一处，否则远程浏览器设置页仍报错。
-  const patched = s.split(SETTINGS_FROM).join(SETTINGS_TO);
+  if (verifiedPatched(s, file + BAK_SUFFIX, backupMetaPath(file))) return "unchanged";
+  const variant = patchVariant(s);
+  // Unknown or mixed anchors are not evidence of a safe patch target.
+  if (!variant) return "missing";
+  // Legacy clients have multiple selectors; the 0.2 selector must be unique.
+  const patched = variant === "0.2" ? s.replace(SETTINGS_FROM_02, SETTINGS_TO_02)
+    : s.split(SETTINGS_FROM).join(SETTINGS_TO);
   const originalSha = contentHash(s);
   const patchedSha = contentHash(patched);
   ensureOriginalBackup(file, s, originalSha, patchedSha);

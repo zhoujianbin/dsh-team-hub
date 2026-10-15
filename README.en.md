@@ -6,7 +6,7 @@ dsh-team-hub sits between browsers and one local DSH instance. It adds login, ro
 
 [中文 README](README.md)
 
-> Status: v0.2.8. Compatible with DSH 0.2.x and later; this release hardens upstream RPC/error handling for newer DSH responses while retaining secure shared access and workspace isolation.
+> **Release status: npm v0.2.8 is deprecated; do not use it with DSH 0.2. v0.2.9 targets DSH 0.2.0-rc.2.** Real-browser approval/question interactions and production model credentials remain unverified; see limitations below. This is not OS-level multi-tenant isolation.
 
 ## Why
 
@@ -32,6 +32,12 @@ dsh-team-hub provides:
 - One reachable DSH Web instance, default `http://127.0.0.1:3080`
 - macOS or Linux for service installation
 - A trusted LAN. Do not expose v0.1 directly to the public internet.
+
+## DSH 0.2 authentication and limitations
+
+The unreleased source has been tested against DSH 0.2.0-rc.2 for private token-to-cookie authentication, slash RPC, workspace/session inventory, and filtered remote streams. Two separate Chrome profiles against a disposable DSH_HOME also verified session creation, display of the per-session model and reasoning selector, prompt submission, readable history and rejection of cross-member history access. The disposable Host uses a loopback Anthropic Messages fixture with a test-only key; both real Chrome profiles received their own `READY` assistant replies. Production DeepSeek credentials and live inference remain unverified. The gateway automatically reads the DSH Web launch token from an owner-only `0600` log (default `~/dsh-web.log`). If necessary, set `"dshWebLog": "/absolute/path/to/private/launch.log"` in the gateway `config.json`. Use a credential-free loopback HTTP upstream such as `http://127.0.0.1:3080`; never put a token in the upstream URL, expose the log, or send DSH credentials to a member browser.
+
+**In development:** DSH 0.2 enforces Agent ID = Session ID. The source now forwards only owner-attributed approval/question requests and binds replies to a previously delivered event, the current login cookie, and a live browser stream. Cross-member, unknown, and replayed results are rejected. Approval and question bridging has isolated mock tests but no complete real-browser validation yet; member messages accept reviewed text only, not image/file attachments or cross-session references; member session fork, queue update, workspace reordering and message feedback editing are disabled pending nested-payload and message-ownership review; Host-wide plugins, usage statistics and unreviewed settings mutations remain denied. Runtime-context snapshots retain sequence and source provenance, but assembled text and section metadata are redacted; shared system and developer instruction text is also withheld from member history to prevent Host-wide disclosure. A DSH 0.2 browser patch now recognizes the known settings selector in isolated tests; members receive only a synthetic member-owned preview-acknowledgement namespace, never shared Host settings. This exact acknowledgement is stored in a gateway-private mode-0600 file and was verified in a disposable Chrome browser. Host model-provider, built-in plugin, and agent preset settings tabs are hidden from members, and their routes remain denied. Other member settings forms and saved preferences remain unsupported pending comprehensive browser testing. This is not a verified production multi-tenant security boundary; `selftest` verifies inventory only, not full browser workflows. DSH agents still run under a shared host OS identity and share model quota and other host resources.
 
 ## Quick start
 
@@ -121,7 +127,7 @@ These are the base shared locations available to member agents. Publishing/versi
 
 ## Upgrading DSH
 
-Version 0.2.8 specifically hardens compatibility with DSH 0.2.x and later. Newer DSH builds can return HTML or plain-text error pages for unauthenticated, starting, or plugin routes instead of JSON; the gateway now converts those responses into readable RPC errors instead of crashing on JSON parsing.
+The in-development source targets DSH 0.2.0-rc.2 private browser authentication and stream/RPC protocols, not untested future DSH versions. Unauthenticated, starting, or failing plugin routes may return HTML/plain text; the gateway converts those to RPC errors, but the scoped member approval and question bridge still requires live browser verification.
 
 DSH RPC and event protocols are internal and may change. After upgrading DSH:
 
