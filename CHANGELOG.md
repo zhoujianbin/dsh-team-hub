@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.11
+
+- Replace the member-visible `GET /api/dsh-usage/overview` and LAN `/remote/api/dsh-usage/overview` 403 response with a schema-compatible, zeroed, non-cacheable overview. Shared Host provider credentials, balances, model selection, spend, and other members’ usage remain withheld.
+- Assert the usage request returns HTTP 200 in real Chrome acceptance and cover both route variants in the isolated gateway integration test.
+
 ## 0.2.10
 
 - Accept DSH 0.2 non-loopback browser routes under `/remote/api/`: normalize the LAN WebSocket endpoint `/remote/api/remote.mux` to the authenticated upstream `/api/remote.mux`, and apply the same tenant-reviewed member RPC policy to `/remote/api/<method>`. This fixes an empty workspace sidebar when members access Team Hub through its LAN address while preserving same-origin, ownership, and credential isolation checks.

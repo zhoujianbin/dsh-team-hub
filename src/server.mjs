@@ -23,6 +23,25 @@ const ADMIN_UI = path.join(ROOT, "admin-ui");
 const COOKIE = "dsh_team_hub_session";
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "host", "content-length", "content-encoding"]);
 
+function emptyMemberUsageOverview(now = Date.now()) {
+  const date = new Date(now).toISOString().slice(0, 10);
+  const totals = () => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 0, cost: 0 });
+  const period = { from: date, to: date, totals: totals(), providers: [] };
+  return {
+    updatedAt: now,
+    providers: [],
+    current: null,
+    usage: {
+      today: { date, totals: totals(), providers: [] },
+      days: [],
+      range: period,
+      availableDays: [],
+      all: { ...period, totals: totals() },
+      observedSpend: { cny: 0, since: now }
+    }
+  };
+}
+
 // 插件注册的宿主级 HTTP 路由：只对 admin 开放（GET/POST/WS 全拦）。
 // 精确匹配或路径边界匹配，避免误伤 /api/events.mux 等核心路由。
 const ADMIN_ONLY_ROUTE_PREFIXES = [
@@ -429,6 +448,9 @@ export async function startServer() {
         if (user.role !== "admin") return send(res, 403, { error: "admin only" });
         return handleAdminApi(context, req, res, url.pathname.slice("/__teamhub/api".length), url.searchParams);
       }
+      if (user.role !== "admin" && ["/api/dsh-usage/overview", "/remote/api/dsh-usage/overview"].includes(url.pathname) &&
+          ["GET", "HEAD"].includes(req.method))
+        return send(res, 200, emptyMemberUsageOverview(), { "cache-control": "no-store" });
       if (user.role !== "admin" && isAdminOnlyRoute(url.pathname)) {
         context.audit.write("policy.denied", { user: user.name, method: "route:" + url.pathname, reason: "插件宿主路由仅 admin 可用" });
         return send(res, 403, { error: "admin only" });

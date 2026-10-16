@@ -249,6 +249,16 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     assert.equal((await (await request("/__teamhub/whoami", { headers: { cookie: alice } })).json()).role, "member");
     assert.equal((await (await request("/__teamhub/whoami", { headers: { cookie: admin } })).json()).role, "admin");
     assert.equal((await request("/__teamhub/api/users", { headers: { cookie: alice } })).status, 403);
+    for (const usagePath of ["/api/dsh-usage/overview", "/remote/api/dsh-usage/overview"]) {
+      const usageResponse = await request(usagePath, { headers: { cookie: alice } });
+      assert.equal(usageResponse.status, 200);
+      assert.equal(usageResponse.headers.get("cache-control"), "no-store");
+      const usage = await usageResponse.json();
+      assert.deepEqual(usage.providers, []);
+      assert.equal(usage.current, null);
+      assert.deepEqual(usage.usage.today.totals, { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, calls: 0, cost: 0 });
+      assert.equal(JSON.stringify(usage).includes("tenant-leak"), false);
+    }
     const staticBundle = await request("/plugins/??@deepseek-ai/dsh-client-modules/client.js&rev=214e67cfa4da",
       { headers: { cookie: alice } });
     assert.equal(staticBundle.status, 200);

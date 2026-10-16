@@ -64,6 +64,8 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel) {
       const state = await send("Runtime.evaluate", { expression: `({href:location.href, title:document.title, text:document.body?.innerText.slice(0,700), workspaceLabels:[...document.querySelectorAll('[role="treeitem"]')].map(e=>e.getAttribute("aria-label")||e.textContent?.trim()).slice(0,12), composer:document.querySelector("textarea")?.placeholder, controls:[...document.querySelectorAll("button")].map(e=>({text:e.textContent?.trim().slice(0,50),label:e.getAttribute("aria-label"),title:e.title,visible:e.getClientRects().length>0})).slice(0,25), links:[...document.querySelectorAll("a")].map(e=>e.textContent?.trim()).filter(Boolean).slice(0,12)})`, returnByValue: true });
       const view = state.result?.value;
       const failed = messages.filter(msg => msg.method === "Network.loadingFailed" && msg.params?.errorText !== "net::ERR_ABORTED");
+      const usageOverviewStatuses = messages.filter(msg => msg.method === "Network.responseReceived" &&
+        new URL(msg.params.response.url).pathname.endsWith("/api/dsh-usage/overview")).map(msg => msg.params.response.status);
       const scriptErrors = messages.filter(msg => msg.method === "Runtime.exceptionThrown").map(msg =>
         ({ text: msg.params?.exceptionDetails?.exception?.description?.slice(0, 350) || msg.params?.exceptionDetails?.text, url: msg.params?.exceptionDetails?.url?.slice(0, 160) })).slice(0, 5);
       const websocketUrls = messages.filter(msg => msg.method === "Network.webSocketCreated").map(msg => {
@@ -83,14 +85,14 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel) {
         previewNotice: view?.text?.includes("Preview Notice"), failedPlugins: view?.text?.includes("Failed to load plugins"),
         loginPage: view?.href?.includes("/login"), changePasswordPage: view?.href?.includes("/change-password"),
         websocketUrls: [...new Set(websocketUrls)], websocketErrors, sentEndpoints: [...new Set(sentEndpoints)], receivedWorkspaceBaseline,
-        networkFailures: failed.length, scriptErrors: scriptErrors.length }));
+        usageOverviewStatuses, networkFailures: failed.length, scriptErrors: scriptErrors.length }));
       if (!view?.href?.startsWith(base) || view.href.includes("/login") ||
           view.href.includes("/change-password") || view.text?.includes("Failed to load plugins") ||
           view.text?.includes("Preview Notice") || !view.workspaceLabels?.includes(member) ||
           !view.controls?.some(control => control.visible && control.label === "New session") ||
           view.controls?.some(control => control.visible && ["Plugins", "Task Board", "Skill Center", "SSH", "Remote access", "Add workspace"].includes(control.label)) ||
           view.controls?.some(control => control.visible && control.text?.includes("Failed to load: usage")) ||
-          failed.length > 0 || scriptErrors.length > 0)
+          usageOverviewStatuses.some(status => status >= 400) || failed.length > 0 || scriptErrors.length > 0)
         throw new Error(`${member} did not initialize the DSH browser shell`);
       await send("Runtime.evaluate", { expression: "document.querySelector('button[aria-label=Settings]')?.click()" });
       await pause(700);
