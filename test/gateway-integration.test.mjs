@@ -84,8 +84,8 @@ function socketFrames(socket) {
   };
 }
 
-async function connect(url, cookie) {
-  const socket = new WebSocket(url, { headers: cookie ? { cookie } : {} });
+async function connect(url, cookie, origin) {
+  const socket = new WebSocket(url, { headers: { ...(cookie ? { cookie } : {}), ...(origin ? { origin } : {}) } });
   await new Promise((resolve, reject) => {
     socket.once("open", resolve);
     socket.once("error", reject);
@@ -263,9 +263,9 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     assert.equal((await request("/admin", { headers: { cookie: admin } })).status, 302);
     assert.equal((await request("/__teamhub/api/users", { headers: { cookie: admin } })).status, 200);
     assert.equal((await request("/api/session/list?token=" + token, { headers: { cookie: admin } })).status, 400);
-    const rpc = async (cookie, method, payload = { args: { _request: {} } }) => {
+    const rpc = async (cookie, method, payload = { args: { _request: {} } }, prefix = "/api/") => {
       const rpcId = crypto.randomUUID();
-      const response = await request("/api/" + method, { method: "POST", headers: { cookie, "content-type": "application/json", authorization: "Bearer client-secret", "x-dsh-web-token": "client-secret" },
+      const response = await request(prefix + method, { method: "POST", headers: { cookie, "content-type": "application/json", authorization: "Bearer client-secret", "x-dsh-web-token": "client-secret" },
         body: JSON.stringify({ type: "client-request", rpcId, method, payload }) });
       return { response, body: await response.json(), rpcId };
     };
@@ -297,6 +297,9 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
       { ...mutationArgs, ops: [{ op: "set", path: ["welcomeNoticeVersion"], value: "future-version" }] }
     ]) assert.equal((await rpc(alice, "settings/mutate", { args })).body.result.ok, false);
     assert.equal(seen.rpc.length, beforeSettingsRpc, "private member preferences reached shared Host");
+    const remoteList = await rpc(alice, "session/list", { args: { _request: {} } }, "/remote/api/");
+    assert.equal(remoteList.body.result.ok, true);
+    assert.deepEqual(remoteList.body.result.value.items.map(item => item.sessionId), ["session-alice"]);
     const full = await rpc(admin, "session/list");
     assert.deepEqual(full.body.result.value.items, sessions);
     assert.equal(full.response.headers.get("set-cookie"), null);
@@ -318,6 +321,14 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     const hostile = new WebSocket(wsUrl, { headers: { cookie: alice, origin: "https://attacker.invalid" } });
     assert.equal(await new Promise(resolve => { hostile.once("open", () => resolve("opened")); hostile.once("error", () => resolve("rejected")); }), "rejected", "cross-origin WebSocket upgrade must fail");
     hostile.terminate();
+    const remoteAliasUrl = gateway.replace("http:", "ws:") + "/remote/api/remote.mux";
+    const remoteAlias = await connect(remoteAliasUrl, alice, gateway);
+    sockets.add(remoteAlias);
+    const remoteAliasFrames = socketFrames(remoteAlias);
+    remoteAlias.send(JSON.stringify({ type: "open", streamId: "remote-work", endpoint: "workspace/follow", payload: { args: {} } }));
+    const remoteAliasBaseline = await remoteAliasFrames.next(frame => frame.streamId === "remote-work" && frame.value?.type === "baseline");
+    assert.deepEqual(remoteAliasBaseline.value.value.items.map(item => item.workspaceId), ["workspace-alice"]);
+    remoteAlias.close();
     const memberWs = await connect(wsUrl, alice);
     sockets.add(memberWs);
     const frames = socketFrames(memberWs);

@@ -66,8 +66,23 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel) {
       const failed = messages.filter(msg => msg.method === "Network.loadingFailed" && msg.params?.errorText !== "net::ERR_ABORTED");
       const scriptErrors = messages.filter(msg => msg.method === "Runtime.exceptionThrown").map(msg =>
         ({ text: msg.params?.exceptionDetails?.exception?.description?.slice(0, 350) || msg.params?.exceptionDetails?.text, url: msg.params?.exceptionDetails?.url?.slice(0, 160) })).slice(0, 5);
+      const websocketUrls = messages.filter(msg => msg.method === "Network.webSocketCreated").map(msg => {
+        try { const url = new URL(msg.params.url); return `${url.protocol}//${url.host}${url.pathname}`; } catch { return "invalid"; }
+      });
+      const websocketErrors = messages.filter(msg => ["Network.webSocketFrameError", "Network.webSocketClosed"].includes(msg.method)).length;
+      const sentEndpoints = messages.filter(msg => msg.method === "Network.webSocketFrameSent").map(msg => {
+        try { return JSON.parse(msg.params.response.payloadData).endpoint; } catch { return null; }
+      }).filter(Boolean);
+      const receivedWorkspaceBaseline = messages.some(msg => {
+        if (msg.method !== "Network.webSocketFrameReceived") return false;
+        try { const frame = JSON.parse(msg.params.response.payloadData); return frame.type === "item" && frame.value?.type === "baseline" && Array.isArray(frame.value?.value?.items); } catch { return false; }
+      });
       console.log("member browser boot", JSON.stringify({ member, workspaceLabels: view?.workspaceLabels,
         visibleHostControls: view?.controls?.filter(control => control.visible && ["Plugins", "Task Board", "Skill Center", "SSH", "Remote access", "Add workspace"].includes(control.label)).map(control => control.label),
+        newSessionVisible: view?.controls?.some(control => control.visible && control.label === "New session"),
+        previewNotice: view?.text?.includes("Preview Notice"), failedPlugins: view?.text?.includes("Failed to load plugins"),
+        loginPage: view?.href?.includes("/login"), changePasswordPage: view?.href?.includes("/change-password"),
+        websocketUrls: [...new Set(websocketUrls)], websocketErrors, sentEndpoints: [...new Set(sentEndpoints)], receivedWorkspaceBaseline,
         networkFailures: failed.length, scriptErrors: scriptErrors.length }));
       if (!view?.href?.startsWith(base) || view.href.includes("/login") ||
           view.href.includes("/change-password") || view.text?.includes("Failed to load plugins") ||

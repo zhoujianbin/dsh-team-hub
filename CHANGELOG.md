@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.10
+
+- Accept DSH 0.2 non-loopback browser routes under `/remote/api/`: normalize the LAN WebSocket endpoint `/remote/api/remote.mux` to the authenticated upstream `/api/remote.mux`, and apply the same tenant-reviewed member RPC policy to `/remote/api/<method>`. This fixes an empty workspace sidebar when members access Team Hub through its LAN address while preserving same-origin, ownership, and credential isolation checks.
+- Add integration coverage for the remote HTTP/WebSocket prefixes with a browser Origin and verify the real `lilei` test account through Chrome over the production LAN address.
+
 ## 0.2.9 (DSH 0.2.0-rc.2 adaptation)
 
 - Read the owner-only DSH Web launch log privately; exchange its launch token for a DSH auth cookie without exposing either credential to members. Bound authenticated upstream RPC waits and member-proxied unary RPCs, returning sanitized DSH error envelopes for Host/network failures; sanitize diagnostics before logging or rendering compatibility checks; token-bearing static requests are rejected before private authentication.

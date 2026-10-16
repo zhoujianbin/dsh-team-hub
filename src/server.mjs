@@ -433,7 +433,10 @@ export async function startServer() {
         context.audit.write("policy.denied", { user: user.name, method: "route:" + url.pathname, reason: "插件宿主路由仅 admin 可用" });
         return send(res, 403, { error: "admin only" });
       }
-      if (user.role !== "admin" && url.pathname.startsWith("/api/") && req.method === "POST") return handleApiPost(context, user, req, res, url.pathname.slice("/api/".length));
+      const memberApiPrefix = url.pathname.startsWith("/api/") ? "/api/" :
+        url.pathname.startsWith("/remote/api/") ? "/remote/api/" : null;
+      if (user.role !== "admin" && memberApiPrefix && req.method === "POST")
+        return handleApiPost(context, user, req, res, url.pathname.slice(memberApiPrefix.length));
       if (user.role !== "admin" && !["GET", "HEAD"].includes(req.method)) return send(res, 403, { error: "member route denied" });
       if (user.role !== "admin" && !isMemberStaticRoute(url.pathname, url.search)) return send(res, 403, { error: "member route denied" });
       return proxyRequest(context, req, res, { injectShim: url.pathname === "/" || url.pathname === "/index.html" });
@@ -452,7 +455,8 @@ export async function startServer() {
     if (!user) { socket.destroy(); return; }
     const url = new URL(req.url, "http://local");
     if (url.search || url.hash) { socket.destroy(); return; }
-    const stream = url.pathname === "/api/events.mux" ? "mux" : url.pathname === "/api/events.host" ? "host" : url.pathname === "/api/remote.mux" ? "remote" : null;
+    const stream = url.pathname === "/api/events.mux" ? "mux" : url.pathname === "/api/events.host" ? "host" :
+      ["/api/remote.mux", "/remote/api/remote.mux"].includes(url.pathname) ? "remote" : null;
     if (!stream || (user.role !== "admin" && stream !== "remote")) { socket.destroy(); return; }
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) { socket.destroy(); return; }
     if (user.mustChangePassword) { socket.destroy(); return; }
@@ -461,7 +465,7 @@ export async function startServer() {
     wss.handleUpgrade(req, socket, head, downstream => {
       const upstreamUrl = new URL(context.config.upstream);
       upstreamUrl.protocol = upstreamUrl.protocol === "https:" ? "wss:" : "ws:";
-      upstreamUrl.pathname = url.pathname;
+      upstreamUrl.pathname = stream === "remote" ? "/api/remote.mux" : url.pathname;
       const upstream = new WebSocket(upstreamUrl, { headers: { host: upstreamUrl.host, origin: context.config.upstream, ...(dshCookie ? { cookie: dshCookie } : {}) } });
       const pending = [];
       const answerable = new Set();
