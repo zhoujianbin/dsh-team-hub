@@ -73,15 +73,14 @@ export const AUTO_SELECT_SHIM = `<script>
       if (attempts > 90) return clearInterval(timer);
       const items = [...document.querySelectorAll('[role="treeitem"]')];
       if (items.length === 0) return;
-      const composer = document.querySelector("textarea");
-      if (composer) {
-        const ph = composer.placeholder || "";
-        // 占位符不再要求选工作区 = 已选中，停止；composer 还没渲染则继续等
-        if (!ph.includes("选择工作区") && !ph.includes("选择一个工作区")) return clearInterval(timer);
-      }
       const target = items.find(el => (el.getAttribute("aria-label") || el.textContent || "").trim() === me.name)
         || items.find(el => (el.getAttribute("aria-label") || el.textContent || "").trim().startsWith(me.name));
-      if (target) target.click();
+      if (!target) return;
+      // A workspace tree item toggles on every click. Clicking it once per timer tick
+      // made an already-selected workspace expand/collapse for up to 90 seconds,
+      // especially on DSH 0.2 where the composer is contenteditable rather than a textarea.
+      if (target.getAttribute("aria-expanded") !== "true") target.click();
+      clearInterval(timer);
     }, 1000);
   } catch {}
 })();

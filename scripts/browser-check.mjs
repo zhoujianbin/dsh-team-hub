@@ -96,6 +96,12 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sess
         throw new Error(`${member} did not initialize the DSH browser shell`);
       if (sessionProbe && !isolatedHost) {
         await pause(7000);
+        const expansionStates = [];
+        for (let index = 0; index < 6; index += 1) {
+          const state = await send("Runtime.evaluate", { expression: `(()=>{const e=[...document.querySelectorAll('[role="treeitem"]')].find(el=>(el.getAttribute('aria-label')||el.textContent||'').trim()===${JSON.stringify(member)});return e?.getAttribute('aria-expanded')??null})()`, returnByValue: true });
+          expansionStates.push(state.result?.value ?? null);
+          await pause(500);
+        }
         const beforeProbe = messages.length;
         const opened = await send("Runtime.evaluate", { expression: `(()=>{const rows=[...document.querySelectorAll('[role="treeitem"]')].filter(e=>e.getClientRects().length);const target=rows.find(e=>{const label=(e.getAttribute('aria-label')||e.textContent||'').trim();return label&&label!==${JSON.stringify(member)}&&label!=='New Session'&&label!=='New session'});if(!target)return false;target.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return true})()`, returnByValue: true });
         await pause(3500);
@@ -107,8 +113,9 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sess
           try { const frame = JSON.parse(msg.params.response.payloadData); return follows.includes(frame.streamId) ? `${frame.type}:${frame.value?.type || frame.error?.code || ""}` : null; } catch { return null; }
         }).filter(Boolean);
         const probe = await send("Runtime.evaluate", { expression: `({loading:document.body?.innerText.includes('Loading history'),failed:document.body?.innerText.includes('Failed to load history'),composer:!!document.querySelector('textarea,[contenteditable=true][role=textbox]'),workspaceRows:[...document.querySelectorAll('[role="treeitem"]')].length})`, returnByValue: true });
-        console.log("member session probe", JSON.stringify({ member, opened: opened.result?.value === true, followOpened: follows.length > 0, followTypes: [...new Set(followTypes)], loading: probe.result?.value?.loading, failed: probe.result?.value?.failed, composer: probe.result?.value?.composer, workspaceRows: probe.result?.value?.workspaceRows }));
-        if (opened.result?.value !== true || follows.length === 0 || !followTypes.includes("item:snapshot") ||
+        console.log("member session probe", JSON.stringify({ member, expansionStates, opened: opened.result?.value === true, followOpened: follows.length > 0, followTypes: [...new Set(followTypes)], loading: probe.result?.value?.loading, failed: probe.result?.value?.failed, composer: probe.result?.value?.composer, workspaceRows: probe.result?.value?.workspaceRows }));
+        if (new Set(expansionStates).size !== 1 || expansionStates[0] !== "true" ||
+            opened.result?.value !== true || follows.length === 0 || !followTypes.includes("item:snapshot") ||
             probe.result?.value?.loading || probe.result?.value?.failed || !probe.result?.value?.composer)
           throw new Error(`${member} existing session history did not load`);
         if (sessionPrompt) {
