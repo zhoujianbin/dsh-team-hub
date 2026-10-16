@@ -112,7 +112,9 @@ async function proxyRequest(context, req, res, { bodyOverride, injectShim = fals
   const config = context.config;
   const upstream = new URL(config.upstream);
   const upstreamUrl = new URL(req.url, config.upstream);
-  if (upstreamUrl.origin !== upstream.origin || upstreamUrl.searchParams.has("token") || (injectShim && upstreamUrl.search)) return send(res, 400, "invalid upstream URL");
+  const loginNonce = injectShim && upstreamUrl.searchParams.size === 1 && /^\d{10,16}$/.test(upstreamUrl.searchParams.get("teamhub-login") || "");
+  if (upstreamUrl.origin !== upstream.origin || upstreamUrl.searchParams.has("token") || (injectShim && upstreamUrl.search && !loginNonce)) return send(res, 400, "invalid upstream URL");
+  if (loginNonce) upstreamUrl.search = "";
   const headers = {};
   for (const [key, value] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(key) && !["cookie", "authorization", "x-dsh-web-token"].includes(key)) headers[key] = value;
   headers.host = upstream.host;
@@ -135,6 +137,10 @@ async function proxyRequest(context, req, res, { bodyOverride, injectShim = fals
   if (injectShim && (outHeaders["content-type"] || "").includes("text/html")) {
     out = Buffer.from(injectSpaShim(out.toString("utf8")));
     delete outHeaders["content-length"];
+    delete outHeaders.etag;
+    delete outHeaders["last-modified"];
+    outHeaders["cache-control"] = "no-store, no-cache, must-revalidate";
+    outHeaders.pragma = "no-cache";
   }
   res.writeHead(response.status, outHeaders);
   res.end(out);
@@ -412,7 +418,9 @@ export async function startServer() {
         const issued = issueSession(home, found.name);
         context.audit.write("auth.login", { user: found.name });
         const next = found.mustChangePassword ? "/change-password" : safeNext(form.get("next"));
-        return send(res, 302, "", { location: next, "set-cookie": `${COOKIE}=${encodeURIComponent(issued.token)}; Path=/; HttpOnly; SameSite=Lax` });
+        const location = next === "/" ? `/?teamhub-login=${Date.now()}` : next;
+        return send(res, 302, "", { location, "cache-control": "no-store",
+          "set-cookie": `${COOKIE}=${encodeURIComponent(issued.token)}; Path=/; HttpOnly; SameSite=Lax` });
       }
       if (url.pathname === "/logout") {
         revokeSession(home, cookies[COOKIE]);
@@ -424,7 +432,7 @@ export async function startServer() {
         return send(res, 302, "", { location: "/login?next=" + encodeURIComponent(req.url) });
       }
       if (url.pathname === "/__teamhub/whoami") {
-        return send(res, 200, { name: user.name, displayName: user.displayName || user.name, role: user.role });
+        return send(res, 200, { name: user.name, displayName: user.displayName || user.name, role: user.role }, { "cache-control": "no-store" });
       }
       if (user.mustChangePassword && url.pathname !== "/change-password") return send(res, 302, "", { location: "/change-password" });
       if (url.pathname === "/change-password") {

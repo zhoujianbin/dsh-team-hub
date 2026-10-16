@@ -17,6 +17,30 @@ export const BROWSER_COMPAT_SHIM = `<script>
 })();
 </script>`;
 
+export const ADMIN_PAIR_SHIM = `<script>
+(() => {
+  // DSH remote UI may reuse an older unpaired response from browser cache.
+  // Team Hub authentication is authoritative: only an authenticated admin gets
+  // this paired view, while member requests continue to the server and are denied.
+  try {
+    const nativeFetch = window.fetch.bind(window);
+    let identityPromise;
+    window.fetch = async (input, init) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url, location.href);
+      if (["/api/pair/status", "/remote/api/pair/status"].includes(url.pathname)) {
+        identityPromise ||= nativeFetch("/__teamhub/whoami", { credentials: "same-origin", cache: "no-store" })
+          .then(response => response.ok ? response.json() : null).catch(() => null);
+        const me = await identityPromise;
+        if (me?.role === "admin") return new Response(JSON.stringify({ ok: true, paired: true,
+          requirePairingForLan: false, phase: "ready", lanAvailable: true, lanAddresses: [],
+          deviceCount: 1, onlineCount: 1 }), { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+      }
+      return nativeFetch(input, init);
+    };
+  } catch {}
+})();
+</script>`;
+
 export const USER_BAR_SHIM = `<script>
 (async () => {
   // 右下角悬浮条：显示当前登录用户（displayName），提供退出登录。
@@ -88,7 +112,7 @@ export const AUTO_SELECT_SHIM = `<script>
 
 export function injectSpaShim(html) {
   if (html.includes("crypto.randomUUID = function randomUUID")) return html;
-  const payload = BROWSER_COMPAT_SHIM + USER_BAR_SHIM + AUTO_SELECT_SHIM;
+  const payload = BROWSER_COMPAT_SHIM + ADMIN_PAIR_SHIM + USER_BAR_SHIM + AUTO_SELECT_SHIM;
   if (html.includes("<head>")) return html.replace("<head>", "<head>" + payload);
   return payload + html;
 }

@@ -244,10 +244,15 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     const loginHtml = await (await request("/login?next=" + encodeURIComponent(attack))).text();
     assert.ok(!loginHtml.includes('"><img') && loginHtml.includes("&quot;&gt;&lt;img"), "login next HTML attribute is escaped");
     const safeRedirect = await request("/login", { method: "POST", body: new URLSearchParams({ username: "alice", password: passwords.get("alice"), next: "//evil.invalid" }) });
-    assert.equal(safeRedirect.headers.get("location"), "/", "external login return path is rejected");
+    assert.match(safeRedirect.headers.get("location"), /^\/\?teamhub-login=\d+$/, "external login return path is rejected and shell cache is busted");
     const alice = await login("alice"), bob = await login("bob"), admin = await login("admin");
     assert.equal((await (await request("/__teamhub/whoami", { headers: { cookie: alice } })).json()).role, "member");
     assert.equal((await (await request("/__teamhub/whoami", { headers: { cookie: admin } })).json()).role, "admin");
+    const freshShell = await request("/?teamhub-login=1234567890123", { headers: { cookie: admin } });
+    assert.equal(freshShell.status, 200);
+    assert.equal(freshShell.headers.get("cache-control"), "no-store, no-cache, must-revalidate");
+    assert.ok((await freshShell.text()).includes('nativeFetch("/__teamhub/whoami"'));
+    assert.equal((await request("/?teamhub-login=bad", { headers: { cookie: admin } })).status, 400);
     for (const pairPath of ["/api/pair/status", "/remote/api/pair/status"]) {
       const pairResponse = await request(pairPath, { headers: { cookie: admin } });
       assert.equal(pairResponse.status, 200);
