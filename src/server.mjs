@@ -448,6 +448,10 @@ export async function startServer() {
         if (user.role !== "admin") return send(res, 403, { error: "admin only" });
         return handleAdminApi(context, req, res, url.pathname.slice("/__teamhub/api".length), url.searchParams);
       }
+      if (user.role === "admin" && ["/api/pair/status", "/remote/api/pair/status"].includes(url.pathname) &&
+          ["GET", "HEAD"].includes(req.method))
+        return send(res, 200, { ok: true, paired: true, requirePairingForLan: false, phase: "ready",
+          lanAvailable: true, lanAddresses: [], deviceCount: 1, onlineCount: 1 }, { "cache-control": "no-store" });
       if (user.role !== "admin" && ["/api/dsh-usage/overview", "/remote/api/dsh-usage/overview"].includes(url.pathname) &&
           ["GET", "HEAD"].includes(req.method))
         return send(res, 200, emptyMemberUsageOverview(), { "cache-control": "no-store" });

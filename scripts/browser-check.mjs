@@ -6,11 +6,11 @@ import { WebSocket } from "ws";
 
 const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-export async function browserCheck(base, memberCookies, { isolatedHost = false, mockModel = false, sessionProbe = false, sessionPrompt = false } = {}) {
-  for (const memberCookie of memberCookies) await browserCheckOne(base, memberCookie, isolatedHost, mockModel, sessionProbe, sessionPrompt);
+export async function browserCheck(base, memberCookies, { isolatedHost = false, mockModel = false, sessionProbe = false, sessionPrompt = false, adminMode = false } = {}) {
+  for (const memberCookie of memberCookies) await browserCheckOne(base, memberCookie, isolatedHost, mockModel, sessionProbe, sessionPrompt, adminMode);
 }
 
-async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sessionProbe, sessionPrompt) {
+async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sessionProbe, sessionPrompt, adminMode) {
   if (!fs.existsSync(chrome)) throw new Error("Chrome is unavailable for browser acceptance");
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "teamhub-chrome-"));
   const child = spawn(chrome, ["--headless=new", "--no-first-run", "--disable-background-networking",
@@ -60,7 +60,7 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sess
       await send("Runtime.evaluate", { expression: `[...document.querySelectorAll("button")].find(e=>e.textContent?.trim()==="Continue")?.click()` });
       await pause(900);
       await send("Runtime.evaluate", { expression: `document.querySelector('button[aria-label="Open sidebar"]')?.click()` });
-      await pause(500);
+      await pause(adminMode ? 3500 : 500);
       const state = await send("Runtime.evaluate", { expression: `({href:location.href, title:document.title, text:document.body?.innerText.slice(0,700), workspaceLabels:[...document.querySelectorAll('[role="treeitem"]')].map(e=>e.getAttribute("aria-label")||e.textContent?.trim()).slice(0,12), composer:document.querySelector("textarea")?.placeholder, controls:[...document.querySelectorAll("button")].map(e=>({text:e.textContent?.trim().slice(0,50),label:e.getAttribute("aria-label"),title:e.title,visible:e.getClientRects().length>0})).slice(0,25), links:[...document.querySelectorAll("a")].map(e=>e.textContent?.trim()).filter(Boolean).slice(0,12)})`, returnByValue: true });
       const view = state.result?.value;
       const failed = messages.filter(msg => msg.method === "Network.loadingFailed" && msg.params?.errorText !== "net::ERR_ABORTED");
@@ -75,16 +75,29 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sess
       const sentEndpoints = messages.filter(msg => msg.method === "Network.webSocketFrameSent").map(msg => {
         try { return JSON.parse(msg.params.response.payloadData).endpoint; } catch { return null; }
       }).filter(Boolean);
+      let receivedWorkspaceCount = null;
       const receivedWorkspaceBaseline = messages.some(msg => {
         if (msg.method !== "Network.webSocketFrameReceived") return false;
-        try { const frame = JSON.parse(msg.params.response.payloadData); return frame.type === "item" && frame.value?.type === "baseline" && Array.isArray(frame.value?.value?.items); } catch { return false; }
+        try { const frame = JSON.parse(msg.params.response.payloadData); if (frame.type === "item" && frame.value?.type === "baseline" && Array.isArray(frame.value?.value?.items)) { receivedWorkspaceCount = frame.value.value.items.length; return true; } return false; } catch { return false; }
       });
+      if (adminMode) {
+        const pairingRequired = view?.text?.includes("Device pairing required") === true;
+        const pairResponses = messages.filter(msg => msg.method === "Network.responseReceived").map(msg => {
+          try { const url = new URL(msg.params.response.url); return url.pathname.includes("pair") ? { path: url.pathname, status: msg.params.response.status } : null; } catch { return null; }
+        }).filter(Boolean);
+        console.log("admin browser boot", JSON.stringify({ pairingRequired, workspaceCount: view?.workspaceLabels?.length || 0, websocketUrls: [...new Set(websocketUrls)], websocketErrors, sentEndpoints: [...new Set(sentEndpoints)], receivedWorkspaceBaseline, receivedWorkspaceCount, pairResponses, networkFailures: failed.length, scriptErrors: scriptErrors.length }));
+        if (pairingRequired || !receivedWorkspaceBaseline || !(receivedWorkspaceCount > 0) || failed.length > 0 || scriptErrors.length > 0)
+          throw new Error("admin browser requires device pairing or cannot load workspaces");
+        await send("Network.clearBrowserCookies");
+        messages.length = 0;
+        continue;
+      }
       console.log("member browser boot", JSON.stringify({ member, workspaceLabels: view?.workspaceLabels,
         visibleHostControls: view?.controls?.filter(control => control.visible && ["Plugins", "Task Board", "Skill Center", "SSH", "Remote access", "Add workspace"].includes(control.label)).map(control => control.label),
         newSessionVisible: view?.controls?.some(control => control.visible && control.label === "New session"),
         previewNotice: view?.text?.includes("Preview Notice"), failedPlugins: view?.text?.includes("Failed to load plugins"),
         loginPage: view?.href?.includes("/login"), changePasswordPage: view?.href?.includes("/change-password"),
-        websocketUrls: [...new Set(websocketUrls)], websocketErrors, sentEndpoints: [...new Set(sentEndpoints)], receivedWorkspaceBaseline,
+        websocketUrls: [...new Set(websocketUrls)], websocketErrors, sentEndpoints: [...new Set(sentEndpoints)], receivedWorkspaceBaseline, receivedWorkspaceCount,
         usageOverviewStatuses, networkFailures: failed.length, scriptErrors: scriptErrors.length }));
       if (!view?.href?.startsWith(base) || view.href.includes("/login") ||
           view.href.includes("/change-password") || view.text?.includes("Failed to load plugins") ||

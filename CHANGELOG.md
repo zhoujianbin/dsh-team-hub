@@ -5,6 +5,7 @@
 - Restore existing-session history for DSH 0.2 journals containing `skill-catalog` and `user-approval` user-message sources. Skill catalog prompt text and entries are replaced with a member-safe placeholder; unknown plugin sources remain denied.
 - Downgrade historical Host `danger-full-access` permission and sandbox journal entries to the member-visible `workspace-write` projection instead of dropping the entire gap-sensitive history snapshot. Add a real Chrome existing-session probe that requires a `session/follow` snapshot and can verify prompt acceptance.
 - Stop the member workspace auto-selector immediately after one expansion. DSH 0.2 uses a contenteditable composer, so the previous textarea-based completion test kept clicking the workspace once per second and toggled it open and closed.
+- Treat an authenticated Team Hub administrator as paired for DSH browser status checks on both local and LAN API prefixes. This removes the upstream Device pairing required modal while leaving pairing routes denied to members; upstream launch tokens and cookies remain server-side.
 
 ## 0.2.11
 
