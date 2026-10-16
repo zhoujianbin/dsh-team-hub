@@ -44,6 +44,12 @@ export function projectUserMessage(data, ownsSession) {
     typeof source.messageId === "string" && typeof source.senderName === "string")
     projectedSource = { kind: "team-message", teamId: source.teamId,
       messageId: source.messageId, senderId: source.senderId, senderName: source.senderName };
+  else if (source.kind === "skill-catalog" && source.form === "catalog" &&
+      Array.isArray(source.entries) && source.entries.every(entry => record(entry) &&
+        typeof entry.name === "string" && typeof entry.description === "string"))
+    projectedSource = { kind: "skill-catalog", form: "catalog", entries: [] };
+  else if (source.kind === "user-approval" && Object.keys(source).length === 1)
+    projectedSource = { kind: "user-approval" };
   else if (source.kind === "session-reference" && source.form === "recall" &&
       source.version === 1 && Array.isArray(source.references) &&
       source.references.every(ref => record(ref) && typeof ref.sessionId === "string" &&
@@ -64,6 +70,7 @@ export function projectUserMessage(data, ownsSession) {
   // Context snapshots may embed operator-wide environment and plugin data.
   // Keep their journal sequence and provenance, but never forward assembled text.
   return { id: data.id, role: "user",
-    content: projectedSource.kind === "runtime-context" ? [{ type: "text", text: "[Runtime context withheld by Team Hub]" }] : content,
+    content: projectedSource.kind === "runtime-context" ? [{ type: "text", text: "[Runtime context withheld by Team Hub]" }] :
+      projectedSource.kind === "skill-catalog" ? [{ type: "text", text: "[Skill catalog withheld by Team Hub]" }] : content,
     source: projectedSource };
 }

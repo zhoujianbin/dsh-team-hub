@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Restore existing-session history for DSH 0.2 journals containing `skill-catalog` and `user-approval` user-message sources. Skill catalog prompt text and entries are replaced with a member-safe placeholder; unknown plugin sources remain denied.
+- Downgrade historical Host `danger-full-access` permission and sandbox journal entries to the member-visible `workspace-write` projection instead of dropping the entire gap-sensitive history snapshot. Add a real Chrome existing-session probe that requires a `session/follow` snapshot and can verify prompt acceptance.
+
 ## 0.2.11
 
 - Replace the member-visible `GET /api/dsh-usage/overview` and LAN `/remote/api/dsh-usage/overview` 403 response with a schema-compatible, zeroed, non-cacheable overview. Shared Host provider credentials, balances, model selection, spend, and other members’ usage remain withheld.

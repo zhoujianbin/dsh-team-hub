@@ -6,11 +6,11 @@ import { WebSocket } from "ws";
 
 const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-export async function browserCheck(base, memberCookies, { isolatedHost = false, mockModel = false } = {}) {
-  for (const memberCookie of memberCookies) await browserCheckOne(base, memberCookie, isolatedHost, mockModel);
+export async function browserCheck(base, memberCookies, { isolatedHost = false, mockModel = false, sessionProbe = false, sessionPrompt = false } = {}) {
+  for (const memberCookie of memberCookies) await browserCheckOne(base, memberCookie, isolatedHost, mockModel, sessionProbe, sessionPrompt);
 }
 
-async function browserCheckOne(base, memberCookie, isolatedHost, mockModel) {
+async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sessionProbe, sessionPrompt) {
   if (!fs.existsSync(chrome)) throw new Error("Chrome is unavailable for browser acceptance");
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "teamhub-chrome-"));
   const child = spawn(chrome, ["--headless=new", "--no-first-run", "--disable-background-networking",
@@ -94,6 +94,51 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel) {
           view.controls?.some(control => control.visible && control.text?.includes("Failed to load: usage")) ||
           usageOverviewStatuses.some(status => status >= 400) || failed.length > 0 || scriptErrors.length > 0)
         throw new Error(`${member} did not initialize the DSH browser shell`);
+      if (sessionProbe && !isolatedHost) {
+        await pause(7000);
+        const beforeProbe = messages.length;
+        const opened = await send("Runtime.evaluate", { expression: `(()=>{const rows=[...document.querySelectorAll('[role="treeitem"]')].filter(e=>e.getClientRects().length);const target=rows.find(e=>{const label=(e.getAttribute('aria-label')||e.textContent||'').trim();return label&&label!==${JSON.stringify(member)}&&label!=='New Session'&&label!=='New session'});if(!target)return false;target.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return true})()`, returnByValue: true });
+        await pause(3500);
+        const probeMessages = messages.slice(beforeProbe);
+        const follows = probeMessages.filter(msg => msg.method === "Network.webSocketFrameSent").map(msg => {
+          try { const frame = JSON.parse(msg.params.response.payloadData); return frame.endpoint === "session/follow" ? frame.streamId : null; } catch { return null; }
+        }).filter(Boolean);
+        const followTypes = probeMessages.filter(msg => msg.method === "Network.webSocketFrameReceived").map(msg => {
+          try { const frame = JSON.parse(msg.params.response.payloadData); return follows.includes(frame.streamId) ? `${frame.type}:${frame.value?.type || frame.error?.code || ""}` : null; } catch { return null; }
+        }).filter(Boolean);
+        const probe = await send("Runtime.evaluate", { expression: `({loading:document.body?.innerText.includes('Loading history'),failed:document.body?.innerText.includes('Failed to load history'),composer:!!document.querySelector('textarea,[contenteditable=true][role=textbox]'),workspaceRows:[...document.querySelectorAll('[role="treeitem"]')].length})`, returnByValue: true });
+        console.log("member session probe", JSON.stringify({ member, opened: opened.result?.value === true, followOpened: follows.length > 0, followTypes: [...new Set(followTypes)], loading: probe.result?.value?.loading, failed: probe.result?.value?.failed, composer: probe.result?.value?.composer, workspaceRows: probe.result?.value?.workspaceRows }));
+        if (opened.result?.value !== true || follows.length === 0 || !followTypes.includes("item:snapshot") ||
+            probe.result?.value?.loading || probe.result?.value?.failed || !probe.result?.value?.composer)
+          throw new Error(`${member} existing session history did not load`);
+        if (sessionPrompt) {
+          const promptStart = messages.length;
+          const focused = await send("Runtime.evaluate", { expression: `(()=>{const e=document.querySelector('[contenteditable=true][role=textbox]');if(!e)return false;e.focus();return true})()`, returnByValue: true });
+          if (focused.result?.value !== true) throw new Error(`${member} existing session composer unavailable`);
+          await send("Input.insertText", { text: "Team Hub 回归测试，请只回复 TEST_OK。" });
+          const sendReady = await send("Runtime.evaluate", { expression: `(()=>{const b=document.querySelector('button[aria-label="Send message"]');if(!b||b.disabled)return false;b.click();return true})()`, returnByValue: true });
+          if (sendReady.result?.value !== true) throw new Error(`${member} existing session prompt was not sendable`);
+          const deadline = Date.now() + 7000;
+          let responses = [];
+          while (Date.now() < deadline) {
+            responses = messages.slice(promptStart).filter(msg => msg.method === "Network.responseReceived" && new URL(msg.params.response.url).pathname.endsWith("/api/session/prompt"));
+            if (responses.length) break;
+            await pause(100);
+          }
+          const results = [];
+          for (const response of responses) {
+            const body = await send("Network.getResponseBody", { requestId: response.params.requestId });
+            try { results.push(JSON.parse(body.body).result?.ok === true); } catch { results.push(false); }
+          }
+          await pause(1200);
+          console.log("member existing prompt", JSON.stringify({ member, statuses: responses.map(response => response.params.response.status), accepted: results.includes(true) }));
+          if (!responses.some(response => response.params.response.status === 200) || !results.includes(true))
+            throw new Error(`${member} existing session prompt was not accepted`);
+        }
+        await send("Network.clearBrowserCookies");
+        messages.length = 0;
+        continue;
+      }
       await send("Runtime.evaluate", { expression: "document.querySelector('button[aria-label=Settings]')?.click()" });
       await pause(700);
       const settingsState = await send("Runtime.evaluate", { expression: "({text:document.body?.innerText.slice(0,850),labels:[...document.querySelectorAll('button')].filter(e=>e.getClientRects().length).map(e=>e.getAttribute('aria-label')||e.textContent?.trim()).slice(0,28)})", returnByValue: true });

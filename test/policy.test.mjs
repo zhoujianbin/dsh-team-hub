@@ -457,6 +457,18 @@ test("member history pages reject foreign child catalog and strip Host metadata"
   assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
     value: { records: [prompt], hasMore: false } }).records[0].event.data.source,
     { kind: "user", rpcId: "request-1", clientTimeZone: "Asia/Shanghai" });
+  const skillCatalog = { ...userMessage, event: { ...userMessage.event,
+    data: { ...userMessage.event.data, source: { kind: "skill-catalog", form: "catalog",
+      entries: [{ name: "private-skill", description: "tenant-leak" }] } } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [skillCatalog], hasMore: false } }).records[0].event.data,
+    { id: "u", role: "user", content: [{ type: "text", text: "[Skill catalog withheld by Team Hub]" }],
+      source: { kind: "skill-catalog", form: "catalog", entries: [] } });
+  const approvalReply = { ...userMessage, event: { ...userMessage.event,
+    data: { ...userMessage.event.data, source: { kind: "user-approval" } } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [approvalReply], hasMore: false } }).records[0].event.data.source,
+    { kind: "user-approval" });
   const questionReply = { ...userMessage, event: { ...userMessage.event,
     data: { ...userMessage.event.data, source: { kind: "user-question-reply",
       callId: "call-1", outcome: "answered", hostSecret: "private" } } } };
@@ -866,12 +878,14 @@ test("member history pages reject foreign child catalog and strip Host metadata"
       value: { records: [{ type: "event", event }], hasMore: false } }).records[0].event,
       { type, seq: 3, time: 6, data: safe });
   }
-  assert.throws(() => filterMemberResponse({ ownership, user: alice, method: "session/page",
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
     value: { records: [{ type: "event", event: { type: "permission/preset", seq: 3, time: 6,
-      data: { preset: "danger-full-access" } } }], hasMore: false } }), /unauthorized/);
-  assert.throws(() => filterMemberResponse({ ownership, user: alice, method: "session/page",
+      data: { preset: "danger-full-access" } } }], hasMore: false } }).records[0].event.data,
+    { preset: "workspace-write" });
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
     value: { records: [{ type: "event", event: { type: "sandbox/mode", seq: 3, time: 6,
-      data: { mode: "danger-full-access" } } }], hasMore: false } }), /unauthorized/);
+      data: { mode: "danger-full-access" } } }], hasMore: false } }).records[0].event.data,
+    { mode: "workspace-write" });
   assert.throws(() => filterMemberResponse({ ownership, user: alice, method: "session/page",
     value: { records: [{ type: "event", event: { type: "feedback/message-delete", seq: 3, time: 6,
       data: { sessionId: "sb", messageId: "msg" } } }], hasMore: false } }), /unauthorized/);

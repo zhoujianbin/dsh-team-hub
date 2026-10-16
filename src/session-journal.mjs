@@ -705,7 +705,7 @@ export function projectMemberJournalEvent(event, ownsSession) {
   }
   if (event.type === "sandbox/mode") {
     const data = event.data;
-    if (!record(data) || data.mode !== "workspace-write" ||
+    if (!record(data) || !["workspace-write", "danger-full-access"].includes(data.mode) ||
         (data.source !== undefined && data.source !== "delegation")) return null;
     return { type: event.type, seq: event.seq, time: event.time,
       data: { mode: "workspace-write",
@@ -720,7 +720,7 @@ export function projectMemberJournalEvent(event, ownsSession) {
         ...(data.source === "delegation" ? { source: "delegation" } : {}) } };
   }
   if (event.type === "permission/preset") {
-    if (!record(event.data) || event.data.preset !== "workspace-write") return null;
+    if (!record(event.data) || !["workspace-write", "danger-full-access"].includes(event.data.preset)) return null;
     return { type: event.type, seq: event.seq, time: event.time, data: { preset: "workspace-write" } };
   }
   if (event.type === "model/selection") {
