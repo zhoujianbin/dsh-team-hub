@@ -23,6 +23,8 @@ export const ADMIN_PAIR_SHIM = `<script>
   // Team Hub authentication is authoritative: only an authenticated admin gets
   // this paired view, while member requests continue to the server and are denied.
   try {
+    if (navigator.serviceWorker) navigator.serviceWorker.getRegistrations().then(registrations => registrations.forEach(registration => registration.unregister())).catch(() => {});
+    if (window.caches) window.caches.keys().then(keys => keys.forEach(key => window.caches.delete(key))).catch(() => {});
     const nativeFetch = window.fetch.bind(window);
     let identityPromise;
     window.fetch = async (input, init) => {

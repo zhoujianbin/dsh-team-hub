@@ -407,7 +407,7 @@ export async function startServer() {
       const session = resolveSession(home, cookies[COOKIE]);
       const user = session && context.config.users.find(u => u.name === session.username && (u.status || "active") === "active");
 
-      if (url.pathname === "/login" && req.method === "GET") return send(res, 200, loginPage(url.searchParams.get("next") || "/"), { "content-type": "text/html; charset=utf-8" });
+      if (url.pathname === "/login" && req.method === "GET") return send(res, 200, loginPage(url.searchParams.get("next") || "/"), { "content-type": "text/html; charset=utf-8", "cache-control": "no-store, no-cache, must-revalidate", pragma: "no-cache" });
       if (url.pathname === "/login" && req.method === "POST") {
         const form = new URLSearchParams((await collect(req)).toString("utf8"));
         const found = authenticate(context.config, String(form.get("username") || ""), String(form.get("password") || ""));
