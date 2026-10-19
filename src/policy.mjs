@@ -277,18 +277,19 @@ function record(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function guardedIds(config, ownership, user, object, readOnly = false) {
+function guardedIds(config, ownership, user, object, readOnly = false, sharedWrite = false) {
+  const accessible = readOnly || sharedWrite;
   for (const key of ["sessionId", "parentSessionId", "childSessionId", "beforeSessionId", "agentId"]) {
     if (Object.hasOwn(object, key)) {
       if (typeof object[key] !== "string" || !object[key] ||
-          !(readOnly ? canAccessSession(config, ownership, user, object[key]) :
+          !(accessible ? canAccessSession(config, ownership, user, object[key]) :
             ownedBy(ownership, user, "session", object[key]) === true)) return false;
     }
   }
   for (const key of ["workspaceId", "beforeWorkspaceId"]) {
     if (Object.hasOwn(object, key)) {
       if (typeof object[key] !== "string" || !object[key] ||
-          !(readOnly ? canAccessWorkspace(config, ownership, user, object[key]) :
+          !(accessible ? canAccessWorkspace(config, ownership, user, object[key]) :
             ownedBy(ownership, user, "workspace", object[key]) === true)) return false;
     }
   }
@@ -380,9 +381,10 @@ function guardRpcMemberRequest({ config, ownership, user, method, payload }) {
   if (typeof scope[required] !== "string")
     return { ok: false, message: "缺少会话或工作区归属参数" };
   const readOnly = ["session/page", "session/projections", "skills/list", "messageFeedback/list", "commands/list"].includes(method);
-  if (!guardedIds(config, ownership, user, args, readOnly) ||
-      !guardedIds(config, ownership, user, args.request || {}, readOnly) ||
-      !guardedIds(config, ownership, user, scope, readOnly))
+  const sharedPrompt = method === "session/prompt";
+  if (!guardedIds(config, ownership, user, args, readOnly, sharedPrompt) ||
+      !guardedIds(config, ownership, user, args.request || {}, readOnly, sharedPrompt) ||
+      !guardedIds(config, ownership, user, scope, readOnly, sharedPrompt))
     return { ok: false, message: "无权访问该会话或工作区" };
   if (record(args.request?.address) && !guardedIds(config, ownership, user, args.request.address, readOnly))
     return { ok: false, message: "无权访问该会话" };
@@ -434,6 +436,9 @@ function guardRpcMemberRequest({ config, ownership, user, method, payload }) {
           Object.keys(block).sort().join() === "text,type" &&
           block.type === "text" && typeof block.text === "string"))
       return { ok: false, message: "成员仅支持已审核的纯文本会话请求" };
+    if (sharedPrompt && request.mode === "interrupt" &&
+        ownership.sessionOwner.get(request.sessionId) !== user.name)
+      return { ok: false, message: "共享会话仅支持排队发送消息" };
   }
   if (method === "session/page") {
     const page = args.request;

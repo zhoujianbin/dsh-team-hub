@@ -97,7 +97,7 @@ async function renderUsers() {
 async function renderWorkspaces() {
   const [rows, users] = await Promise.all([api("/workspaces"), api("/users")]);
   const eligible = users.filter(user => user.role === "member" && user.status === "active");
-  app.innerHTML = `<section class="card"><h2>工作区共享</h2><p>授权成员可以查看共享工作区及历史会话。工作区所有者无需授权。</p>
+  app.innerHTML = `<section class="card"><h2>工作区共享</h2><p>授权成员可以查看共享工作区、浏览历史并发送文本消息；审批、重命名和设置仍由所有者处理。工作区所有者无需授权。</p>
     <div id="workspace-message"></div><table><thead><tr><th>工作区 / 路径</th><th>所有者</th><th>共享给</th><th>操作</th></tr></thead><tbody>
     ${rows.map((w, index) => `<tr><td>${esc(w.title)}<br><small class="mono">${esc(w.path || w.workspaceId)}</small></td><td>${esc(w.owner)}</td>
       <td>${(w.members || []).map(esc).join("、") || "未共享"}</td>
@@ -149,7 +149,7 @@ function openShareDialog({ workspace, users, onSubmit }) {
     <section class="modal" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" aria-describedby="share-dialog-help">
       <h2 id="share-dialog-title">设置共享成员</h2>
       <p class="modal-subtitle">${esc(workspace.title)} <span class="mono">${esc(workspace.path || workspace.workspaceId)}</span></p>
-      <p class="modal-help" id="share-dialog-help">点击成员姓名可多选，再用中间按钮调整是否授权。授权成员只能查看该工作区及其历史会话。</p>
+      <p class="modal-help" id="share-dialog-help">点击成员姓名可多选，再用中间按钮调整是否授权。授权成员可以查看历史并发送文本消息；审批、重命名和设置仍由所有者处理。</p>
       <div class="dual-list">
         <section class="dual-list-column" aria-labelledby="granted-heading">
           <h3 class="dual-list-heading" id="granted-heading">已有权限 <span class="count" data-count="granted">0</span></h3>

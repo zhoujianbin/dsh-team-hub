@@ -48,20 +48,23 @@ test("member cannot use another member session", () => {
   assert.equal(result.ok, false);
 });
 
-test("workspace sharing grants read access without transferring ownership or mutation rights", () => {
+test("workspace sharing grants collaborative prompts without ownership or admin mutation rights", () => {
   const { config, ownership, alice } = fixture();
   config.workspaceShares.wb = ["alice"];
-  const read = (method, request) => guardMemberRequest({ config, ownership, user: alice, method, payload: { args: { request } } }).ok;
-  assert.equal(read("session/projections", { sessionId: "sb" }), true);
-  assert.equal(read("session/rename", { sessionId: "sb", title: "unsafe" }), false);
-  assert.equal(read("workspace/rename", { workspaceId: "wb", title: "unsafe" }), false);
-  assert.equal(read("session/prompt", { sessionId: "sb", mode: "default", content: [{ type: "text", text: "unsafe" }] }), false);
-  assert.equal(read("session/create", { workspaceId: "wb" }), false);
+  const call = (method, request) => guardMemberRequest({ config, ownership, user: alice, method, payload: { args: { request } } }).ok;
+  const prompt = { sessionId: "sb", requestId: "shared-1", mode: "queue", content: [{ type: "text", text: "hello" }] };
+  assert.equal(call("session/projections", { sessionId: "sb" }), true);
+  assert.equal(call("session/prompt", prompt), true);
+  assert.equal(call("session/prompt", { ...prompt, mode: "interrupt" }), false);
+  assert.equal(call("session/rename", { sessionId: "sb", title: "unsafe" }), false);
+  assert.equal(call("workspace/rename", { workspaceId: "wb", title: "unsafe" }), false);
+  assert.equal(call("session/create", { workspaceId: "wb" }), false);
   assert.equal(ownership.workspaceOwner.get("wb"), "bob");
   assert.deepEqual(filterMemberResponse({ config, ownership, user: alice, method: "session/list",
     value: { items: [{ sessionId: "sa" }, { sessionId: "sb" }] } }).items.map(row => row.sessionId), ["sa", "sb"]);
   delete config.workspaceShares.wb;
-  assert.equal(read("session/projections", { sessionId: "sb" }), false);
+  assert.equal(call("session/projections", { sessionId: "sb" }), false);
+  assert.equal(call("session/prompt", prompt), false);
 });
 
 test("share grants fail closed on changed owner path and cross-workspace session cwd", () => {

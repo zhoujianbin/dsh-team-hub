@@ -366,7 +366,17 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     assert.deepEqual((await grant.json()).members, ["alice"]);
     assert.equal((await rpc(alice, "session/list")).body.result.value.items.length, 2);
     assert.equal((await rpc(alice, "session/projections", { args: { request: { sessionId: "session-bob" } } })).body.result.ok, true);
-    assert.equal((await rpc(alice, "session/prompt", { args: { request: { sessionId: "session-bob", requestId: "deny", mode: "queue", content: [{ type: "text", text: "deny" }] } } })).body.result.ok, false);
+    const beforeSharedPrompt = seen.prompts.length;
+    const sharedPrompt = await rpc(alice, "session/prompt", { args: { request: { sessionId: "session-bob",
+      requestId: "shared", mode: "queue", content: [{ type: "text", text: "hello shared" }] } } });
+    assert.equal(sharedPrompt.body.result.ok, true);
+    assert.deepEqual(sharedPrompt.body.result.value, { accepted: true });
+    assert.equal(seen.prompts.length, beforeSharedPrompt + 1);
+    assert.equal(seen.prompts.at(-1).sessionId, "session-bob");
+    assert.equal((await rpc(alice, "session/prompt", { args: { request: { sessionId: "session-bob",
+      requestId: "interrupt", mode: "interrupt", content: [{ type: "text", text: "stop" }] } } })).body.result.ok, false);
+    assert.equal(seen.prompts.length, beforeSharedPrompt + 1);
+    seen.prompts.length = 0; // Keep the later owner-only prompt assertions independent.
     const fileRead = await rpc(alice, "workspaceFiles/read", { args: {
       workspaceFileScopeId: "session-bob", path: "PROJECT_MEMORY.md", range: { offset: 1 } } });
     assert.equal(fileRead.body.result.ok, true);

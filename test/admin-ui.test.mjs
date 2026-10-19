@@ -21,6 +21,7 @@ test("admin workspace sharing uses a two-column picker instead of free-text user
     "the left arrow must grant the selected right-column member");
   assert.ok(app.includes('data-move="revoke" aria-label="移除所选成员的权限" title="移除所选成员的权限" disabled>→</button>'),
     "the right arrow must revoke the selected left-column member");
+  assert.ok(app.includes("发送文本消息"), "sharing copy must describe collaborative prompts");
   assert.ok(!app.includes("prompt(`设置"), "sharing must not ask the administrator to type usernames");
 });
 
