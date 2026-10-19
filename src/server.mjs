@@ -109,11 +109,11 @@ function changePasswordPage(error = "") {
 <body><form method="post" action="/change-password"><h1>首次登录，请修改密码</h1><input name="current" type="password" placeholder="当前密码" required><input name="next" type="password" placeholder="新密码（至少 8 位）" required>${error ? `<p class="error">${escapeHtmlAttribute(error)}</p>` : ""}<button>保存并继续</button></form></body></html>`;
 }
 
-async function proxyRequest(context, req, res, { bodyOverride, injectShim = false, normalizeRemoteApi = false } = {}) {
+async function proxyRequest(context, req, res, { bodyOverride, injectShim = false, normalizeRemoteRoutes = false } = {}) {
   const config = context.config;
   const upstream = new URL(config.upstream);
   const upstreamUrl = new URL(req.url, config.upstream);
-  if (normalizeRemoteApi && upstreamUrl.pathname.startsWith("/remote/api/"))
+  if (normalizeRemoteRoutes && upstreamUrl.pathname.startsWith("/remote/"))
     upstreamUrl.pathname = upstreamUrl.pathname.slice("/remote".length);
   const loginNonce = injectShim && upstreamUrl.searchParams.size === 1 && /^\d{10,16}$/.test(upstreamUrl.searchParams.get("teamhub-login") || "");
   if (upstreamUrl.origin !== upstream.origin || upstreamUrl.searchParams.has("token") || (injectShim && upstreamUrl.search && !loginNonce)) return send(res, 400, "invalid upstream URL");
@@ -480,7 +480,7 @@ export async function startServer() {
       if (user.role !== "admin" && !["GET", "HEAD"].includes(req.method)) return send(res, 403, { error: "member route denied" });
       if (user.role !== "admin" && !isMemberStaticRoute(url.pathname, url.search)) return send(res, 403, { error: "member route denied" });
       return proxyRequest(context, req, res, { injectShim: url.pathname === "/" || url.pathname === "/index.html",
-        normalizeRemoteApi: user.role === "admin" });
+        normalizeRemoteRoutes: user.role === "admin" });
     } catch (error) {
       context.audit.write("system.request-error", { error: error?.name || "Error" });
       send(res, 502, { error: "upstream request failed" });

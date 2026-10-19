@@ -162,6 +162,11 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
         res.end(JSON.stringify({ type: "server-response", rpcId: body.rpcId, result: { ok: true, value } }));
         return;
       }
+      if (url.pathname === "/git/status") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ path: url.pathname }));
+        return;
+      }
       if (url.pathname === "/api/skin-center/v2/active") {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ path: url.pathname }));
@@ -256,6 +261,9 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     const normalizedAdminRoute = await request("/remote/api/skin-center/v2/active", { headers: { cookie: admin } });
     assert.equal(normalizedAdminRoute.status, 200);
     assert.deepEqual(await normalizedAdminRoute.json(), { path: "/api/skin-center/v2/active" });
+    const normalizedGitRoute = await request("/remote/git/status", { method: "POST", headers: { cookie: admin, "content-type": "application/json" }, body: "{}" });
+    assert.equal(normalizedGitRoute.status, 200);
+    assert.deepEqual(await normalizedGitRoute.json(), { path: "/git/status" });
     const freshShell = await request("/?teamhub-login=1234567890123", { headers: { cookie: admin } });
     assert.equal(freshShell.status, 200);
     assert.equal(freshShell.headers.get("cache-control"), "no-store, no-cache, must-revalidate");
