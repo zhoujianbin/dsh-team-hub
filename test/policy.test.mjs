@@ -549,6 +549,13 @@ test("member history pages reject foreign child catalog and strip Host metadata"
     value: { records: [instructions], hasMore: false } }).records[0].event.data,
     { id: "u", role: "user", content: [{ type: "text", text: "[Agent instructions withheld by Team Hub]" }],
       source: { kind: "agent-instructions", form: "instructions" } });
+  const toolJobNotice = { ...userMessage, event: { ...userMessage.event,
+    data: { ...userMessage.event.data, source: { kind: "tool-jobs", form: "notice",
+      summary: "operator/private", hostSecret: "private" } } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [toolJobNotice], hasMore: false } }).records[0].event.data,
+    { id: "u", role: "user", content: [{ type: "text", text: "[Tool job notice withheld by Team Hub]" }],
+      source: { kind: "tool-jobs", form: "notice", summary: "Tool job notice" } });
   const approvalReply = { ...userMessage, event: { ...userMessage.event,
     data: { ...userMessage.event.data, source: { kind: "user-approval" } } } };
   assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",

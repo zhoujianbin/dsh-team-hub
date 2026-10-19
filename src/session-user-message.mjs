@@ -37,6 +37,9 @@ export function projectUserMessage(data, ownsSession) {
     projectedSource = { kind: "model-selection", form: "notice", summary: "Model selection notice" };
   else if (source.kind === "agent-instructions" && source.form === "instructions")
     projectedSource = { kind: "agent-instructions", form: "instructions" };
+  else if (source.kind === "tool-jobs" && source.form === "notice" &&
+    typeof source.summary === "string")
+    projectedSource = { kind: "tool-jobs", form: "notice", summary: "Tool job notice" };
   else if (source.kind === "schedule" && source.form === undefined)
     projectedSource = { kind: "schedule" };
   else if (source.kind === "schedule" && source.form === "notice" &&
@@ -84,6 +87,7 @@ export function projectUserMessage(data, ownsSession) {
   return { id: data.id, role: "user",
     content: projectedSource.kind === "runtime-context" ? [{ type: "text", text: "[Runtime context withheld by Team Hub]" }] :
       projectedSource.kind === "skill-catalog" ? [{ type: "text", text: "[Skill catalog withheld by Team Hub]" }] :
-      projectedSource.kind === "agent-instructions" ? [{ type: "text", text: "[Agent instructions withheld by Team Hub]" }] : content,
+      projectedSource.kind === "agent-instructions" ? [{ type: "text", text: "[Agent instructions withheld by Team Hub]" }] :
+      projectedSource.kind === "tool-jobs" ? [{ type: "text", text: "[Tool job notice withheld by Team Hub]" }] : content,
     source: projectedSource };
 }
