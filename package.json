@@ -1,7 +1,7 @@
 {
   "name": "dsh-team-hub",
-  "version": "0.2.11",
-  "description": "Turn a single-user DeepSeek Harness instance into a secure, workspace-isolated team service",
+  "version": "0.3.0",
+  "description": "Turn a single-user DeepSeek Harness instance into a secure team service with isolated and shared workspaces",
   "type": "module",
   "bin": {
     "dsh-team-hub": "bin/dsh-team-hub.js"
@@ -29,7 +29,8 @@
     "team",
     "gateway",
     "multi-user",
-    "workspace-isolation"
+    "workspace-isolation",
+    "workspace-sharing"
   ],
   "engines": {
     "node": ">=22"

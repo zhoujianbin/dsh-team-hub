@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-19)
 
+- Support DSH 0.2.0 and newer. Add admin-managed shared workspaces so members can see their own and granted workspaces, load shared history, preview text files, and send queued text messages while owners retain approvals and workspace mutations.
 - Restore shared workspace history when sessions contain subagents or newer journal entries. Subagent sessions now inherit access from an accessible parent only while their canonical cwd stays inside that parent workspace; image and file attachments are replaced with member-safe placeholders, agent-instruction, tool-job notice, and host tool-registry messages are reduced to generic notices, model-selection notices are redacted, and fractional retry delays are accepted. This fixes the shared workspace being stuck on `Loading history` for sessions with delegated work.
 - Allow members to preview text files in their own and shared sessions through `workspaceFiles/read`. The requested path is resolved inside the session's accessible workspace, rejecting absolute paths, traversal, missing files, symlink escapes, oversized ranges, and revoked grants; responses replace the Host absolute path with the workspace-relative path and recheck authorization after the upstream read.
 - Replace the free-text workspace sharing prompt with a two-column picker: granted members on the left, the remaining enabled members on the right, multi-select rows and arrow buttons to move them. The dialog identifies the project by title and path, excludes the owner, reports save failures in place, and keeps keyboard and screen-reader semantics for the dialog and both listboxes. Admin UI assets are served with `no-store` so a deployment takes effect on a normal refresh.
