@@ -60,7 +60,7 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sess
       await send("Runtime.evaluate", { expression: `[...document.querySelectorAll("button")].find(e=>e.textContent?.trim()==="Continue")?.click()` });
       await pause(900);
       await send("Runtime.evaluate", { expression: `document.querySelector('button[aria-label="Open sidebar"]')?.click()` });
-      await pause(adminMode ? 3500 : 500);
+      await pause(adminMode ? 12000 : 500);
       const state = await send("Runtime.evaluate", { expression: `({href:location.href, title:document.title, text:document.body?.innerText.slice(0,700), workspaceLabels:[...document.querySelectorAll('[role="treeitem"]')].map(e=>e.getAttribute("aria-label")||e.textContent?.trim()).slice(0,12), composer:document.querySelector("textarea")?.placeholder, controls:[...document.querySelectorAll("button")].map(e=>({text:e.textContent?.trim().slice(0,50),label:e.getAttribute("aria-label"),title:e.title,visible:e.getClientRects().length>0})).slice(0,25), links:[...document.querySelectorAll("a")].map(e=>e.textContent?.trim()).filter(Boolean).slice(0,12)})`, returnByValue: true });
       const view = state.result?.value;
       const failed = messages.filter(msg => msg.method === "Network.loadingFailed" && msg.params?.errorText !== "net::ERR_ABORTED");
@@ -86,7 +86,7 @@ async function browserCheckOne(base, memberCookie, isolatedHost, mockModel, sess
           try { const url = new URL(msg.params.response.url); return url.pathname.includes("pair") ? { path: url.pathname, status: msg.params.response.status } : null; } catch { return null; }
         }).filter(Boolean);
         console.log("admin browser boot", JSON.stringify({ pairingRequired, workspaceCount: view?.workspaceLabels?.length || 0, websocketUrls: [...new Set(websocketUrls)], websocketErrors, sentEndpoints: [...new Set(sentEndpoints)], receivedWorkspaceBaseline, receivedWorkspaceCount, pairResponses, networkFailures: failed.length, scriptErrors: scriptErrors.length }));
-        if (pairingRequired || !receivedWorkspaceBaseline || !(receivedWorkspaceCount > 0) || failed.length > 0 || scriptErrors.length > 0)
+        if (pairingRequired || pairResponses.some(response => response.status >= 400) || !receivedWorkspaceBaseline || !(receivedWorkspaceCount > 0) || failed.length > 0 || scriptErrors.length > 0)
           throw new Error("admin browser requires device pairing or cannot load workspaces");
         await send("Network.clearBrowserCookies");
         messages.length = 0;

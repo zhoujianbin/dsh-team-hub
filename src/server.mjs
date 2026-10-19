@@ -67,7 +67,8 @@ function isMemberStaticRoute(pathname, search = "") {
 }
 
 function isAdminOnlyRoute(pathname) {
-  return ADMIN_ONLY_ROUTE_PREFIXES.some(p => pathname === p || pathname.startsWith(p + "/"));
+  const canonical = pathname.startsWith("/remote/api/") ? pathname.slice("/remote".length) : pathname;
+  return ADMIN_ONLY_ROUTE_PREFIXES.some(p => canonical === p || canonical.startsWith(p + "/"));
 }
 
 function send(res, status, body, headers = {}) {
@@ -460,6 +461,9 @@ export async function startServer() {
           ["GET", "HEAD"].includes(req.method))
         return send(res, 200, { ok: true, paired: true, requirePairingForLan: false, phase: "ready",
           lanAvailable: true, lanAddresses: [], deviceCount: 1, onlineCount: 1 }, { "cache-control": "no-store" });
+      if (user.role === "admin" && ["/api/pair/heartbeat", "/remote/api/pair/heartbeat"].includes(url.pathname) &&
+          req.method === "POST")
+        return send(res, 200, { ok: true }, { "cache-control": "no-store" });
       if (user.role !== "admin" && ["/api/dsh-usage/overview", "/remote/api/dsh-usage/overview"].includes(url.pathname) &&
           ["GET", "HEAD"].includes(req.method))
         return send(res, 200, emptyMemberUsageOverview(), { "cache-control": "no-store" });

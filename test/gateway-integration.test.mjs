@@ -261,6 +261,13 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
         lanAvailable: true, lanAddresses: [], deviceCount: 1, onlineCount: 1 });
       assert.equal((await request(pairPath, { headers: { cookie: alice } })).status, 403);
     }
+    for (const heartbeatPath of ["/api/pair/heartbeat", "/remote/api/pair/heartbeat"]) {
+      const heartbeat = await request(heartbeatPath, { method: "POST", headers: { cookie: admin, "content-type": "application/json" }, body: "{}" });
+      assert.equal(heartbeat.status, 200);
+      assert.equal(heartbeat.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await heartbeat.json(), { ok: true });
+      assert.equal((await request(heartbeatPath, { method: "POST", headers: { cookie: alice, "content-type": "application/json" }, body: "{}" })).status, 403);
+    }
     assert.equal((await request("/__teamhub/api/users", { headers: { cookie: alice } })).status, 403);
     for (const usagePath of ["/api/dsh-usage/overview", "/remote/api/dsh-usage/overview"]) {
       const usageResponse = await request(usagePath, { headers: { cookie: alice } });
