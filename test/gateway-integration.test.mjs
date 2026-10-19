@@ -117,6 +117,8 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
       if (role === "member") fs.mkdirSync(path.join(config.workspaceRoot, name), { recursive: true });
     }
     const roots = Object.fromEntries(["alice", "bob"].map(name => [name, path.join(config.workspaceRoot, name)]));
+    fs.writeFileSync(path.join(roots.bob, "PROJECT_MEMORY.md"), "# Bob memory\n");
+    fs.writeFileSync(path.join(roots.alice, "secret.md"), "# Alice secret\n");
     const views = ["alice", "bob"].map(name => ({ workspaceId: "workspace-" + name, path: roots[name], title: name, sessionIds: ["session-" + name], createdAt: 1, updatedAt: 1 }));
     const sessions = ["alice", "bob"].map(name => ({ sessionId: "session-" + name, cwd: roots[name] }));
     const token = crypto.randomBytes(32).toString("base64url");
@@ -161,6 +163,8 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
             hasMore: false, hostSecret: "tenant-leak" }
           : body.method === "session/list" ? { items: sessions, total: 2, operatorHome: "/operator/private" }
           : body.method === "session/projections" ? { asOfSeq: 0, values: {} }
+          : body.method === "workspaceFiles/read" ? { offset: 1, text: "# Bob memory\n", lines: 1, eof: true,
+            absolutePath: path.join(roots.bob, "PROJECT_MEMORY.md"), version: "v1", hostSecret: "tenant-leak" }
           : body.method === "settings/describe" ? { writable: true, hasDocument: true, namespaces: [{ ns: "llm", schema: { apiKey: "tenant-leak" }, value: { apiKey: "tenant-leak" } }] }
           : body.method === "workspace/create" ? { workspace: { workspaceId: "created-" + path.basename(body.payload.args.request.path), title: path.basename(body.payload.args.request.path), path: body.payload.args.request.path, sessionIds: [] } }
           : { unknown: true };
@@ -363,12 +367,24 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     assert.equal((await rpc(alice, "session/list")).body.result.value.items.length, 2);
     assert.equal((await rpc(alice, "session/projections", { args: { request: { sessionId: "session-bob" } } })).body.result.ok, true);
     assert.equal((await rpc(alice, "session/prompt", { args: { request: { sessionId: "session-bob", requestId: "deny", mode: "queue", content: [{ type: "text", text: "deny" }] } } })).body.result.ok, false);
+    const fileRead = await rpc(alice, "workspaceFiles/read", { args: {
+      workspaceFileScopeId: "session-bob", path: "PROJECT_MEMORY.md", range: { offset: 1 } } });
+    assert.equal(fileRead.body.result.ok, true);
+    assert.deepEqual(fileRead.body.result.value, { offset: 1, text: "# Bob memory\n", lines: 1, eof: true,
+      absolutePath: "PROJECT_MEMORY.md", version: "v1" });
+    const beforeTraversal = seen.rpc.length;
+    const traversal = await rpc(alice, "workspaceFiles/read", { args: {
+      workspaceFileScopeId: "session-bob", path: "../alice/secret.md" } });
+    assert.equal(traversal.body.result.ok, false);
+    assert.equal(seen.rpc.length, beforeTraversal, "traversal file read reached upstream");
     const sharingRows = await (await request("/__teamhub/api/workspaces", { headers: { cookie: admin } })).json();
     assert.deepEqual(sharingRows.find(row => row.workspaceId === "workspace-bob").members, ["alice"]);
     assert.equal(sharingRows.find(row => row.workspaceId === "workspace-bob").title, "bob");
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8")).workspaceShares["workspace-bob"], ["alice"]);
     const revoke = await request(sharingRoute, { method: "POST", headers: { cookie: admin, "content-type": "application/json" }, body: JSON.stringify({ members: [] }) });
     assert.equal(revoke.status, 200);
+    assert.equal((await rpc(alice, "workspaceFiles/read", { args: { workspaceFileScopeId: "session-bob",
+      path: "PROJECT_MEMORY.md" } })).body.result.ok, false);
     assert.deepEqual((await rpc(alice, "session/list")).body.result.value.items.map(item => item.sessionId), ["session-alice"]);
     for (const [cookie, own] of [[alice, "alice"], [bob, "bob"]]) {
       const { response, body } = await rpc(cookie, "session/list");

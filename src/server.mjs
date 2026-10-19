@@ -301,11 +301,13 @@ async function handleApiPost(context, user, req, res, method) {
       if (method === "$events/result") {
         if (body.result.value !== undefined) return rpcError(res, rpcId, "internal", "invalid event acknowledgment", 502);
       } else {
+        let currentArgs = payload.args;
         if (method !== "session/list" && method !== "session/search") {
           const currentGuard = guardMemberRequest({ config: context.config, ownership: context.ownership, user, method, payload });
           if (!currentGuard.ok) return rpcError(res, rpcId, "forbidden", "共享授权已撤销");
+          currentArgs = currentGuard.payload.args;
         }
-        try { body.result.value = filterMemberResponse({ config: context.config, ownership: context.ownership, user, method, value: body.result.value }); }
+        try { body.result.value = filterMemberResponse({ config: context.config, ownership: context.ownership, user, method, value: body.result.value, args: currentArgs }); }
         catch { return rpcError(res, rpcId, "internal", "invalid upstream RPC result", 502); }
       }
     } else {

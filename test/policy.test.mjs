@@ -96,6 +96,38 @@ test("shared subagent sessions inherit access only within the parent workspace",
   assert.equal(ownership.sessionWorkspace.get("child-nested"), "wb");
 });
 
+test("shared workspace file previews stay inside accessible workspaces and hide host paths", () => {
+  const { config, ownership, alice } = fixture();
+  config.workspaceShares.wb = ["alice"];
+  const bobRoot = "/tmp/dsh-team-hub-test/workspaces/bob";
+  const aliceRoot = "/tmp/dsh-team-hub-test/workspaces/alice";
+  fs.writeFileSync(bobRoot + "/PROJECT_MEMORY.md", "# Memory\n");
+  fs.writeFileSync(aliceRoot + "/secret.md", "# Alice\n");
+  const guard = args => guardMemberRequest({ config, ownership, user: alice,
+    method: "workspaceFiles/read", payload: { args } });
+  const allowed = guard({ workspaceFileScopeId: "sb", path: "PROJECT_MEMORY.md", range: { offset: 1 } });
+  assert.equal(allowed.ok, true);
+  assert.deepEqual(allowed.payload.args, { workspaceFileScopeId: "sb",
+    path: "PROJECT_MEMORY.md", range: { offset: 1 } });
+  assert.equal(guard({ workspaceFileScopeId: "sb", path: "../alice/secret.md" }).ok, false);
+  assert.equal(guard({ workspaceFileScopeId: "sb", path: bobRoot + "/PROJECT_MEMORY.md" }).ok, false);
+  assert.equal(guard({ workspaceFileScopeId: "sb", path: "missing.md" }).ok, false);
+  assert.equal(guard({ workspaceFileScopeId: "sa", path: "PROJECT_MEMORY.md" }).ok, false);
+  assert.equal(guard({ workspaceFileScopeId: "sb", path: "PROJECT_MEMORY.md", range: { limit: 5001 } }).ok, false);
+  const value = { offset: 1, text: "# Memory\n", lines: 1, eof: true,
+    absolutePath: bobRoot + "/PROJECT_MEMORY.md", version: "v1", hostSecret: "private" };
+  const args = { workspaceFileScopeId: "sb", path: "PROJECT_MEMORY.md" };
+  assert.deepEqual(filterMemberResponse({ config, ownership, user: alice,
+    method: "workspaceFiles/read", args, value }),
+    { offset: 1, text: "# Memory\n", lines: 1, eof: true,
+      absolutePath: "PROJECT_MEMORY.md", version: "v1" });
+  assert.throws(() => filterMemberResponse({ config, ownership, user: alice,
+    method: "workspaceFiles/read", args,
+    value: { ...value, absolutePath: aliceRoot + "/secret.md" } }));
+  delete config.workspaceShares.wb;
+  assert.equal(guard({ workspaceFileScopeId: "sb", path: "PROJECT_MEMORY.md" }).ok, false);
+});
+
 test("rename RPCs accept only their scoped ID and title", () => {
   const { config, ownership, alice } = fixture();
   const guard = (method, request, extra = {}) => guardMemberRequest({ config, ownership, user: alice, method,

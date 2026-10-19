@@ -295,6 +295,40 @@ function guardedIds(config, ownership, user, object, readOnly = false) {
   return true;
 }
 
+function guardWorkspaceFileRead({ config, ownership, user, args }) {
+  if (!record(args) ||
+      Object.keys(args).some(key => !["workspaceFileScopeId", "path", "range"].includes(key)) ||
+      typeof args.workspaceFileScopeId !== "string" || !args.workspaceFileScopeId ||
+      typeof args.path !== "string" || !args.path || args.path.length > 1024 ||
+      args.path.includes("\0") || path.isAbsolute(args.path) ||
+      !canAccessSession(config, ownership, user, args.workspaceFileScopeId))
+    return { ok: false, message: "无权读取该工作区文件" };
+  const workspaceId = ownership.sessionWorkspace.get(args.workspaceFileScopeId);
+  if (typeof workspaceId !== "string" || workspaceId === "ambiguous")
+    return { ok: false, message: "无权读取该工作区文件" };
+  const root = ownership.workspacePath.get(workspaceId);
+  if (typeof root !== "string" || root === "ambiguous")
+    return { ok: false, message: "无权读取该工作区文件" };
+  const target = path.resolve(root, args.path);
+  if (!canAccessPath(config, ownership, user, target, workspaceId) ||
+      !fs.existsSync(target) || !fs.statSync(target).isFile())
+    return { ok: false, message: "无权读取该工作区文件" };
+  if (args.range !== undefined) {
+    if (!record(args.range) ||
+        Object.keys(args.range).some(key => !["offset", "limit"].includes(key)) ||
+        (args.range.offset !== undefined &&
+          (!Number.isSafeInteger(args.range.offset) || args.range.offset < 0)) ||
+        (args.range.limit !== undefined &&
+          (!Number.isSafeInteger(args.range.limit) || args.range.limit < 0 || args.range.limit > 5000)))
+      return { ok: false, message: "文件读取范围无效" };
+  }
+  return { ok: true, payload: { args: {
+    workspaceFileScopeId: args.workspaceFileScopeId,
+    path: path.relative(root, target) || ".",
+    ...(args.range !== undefined ? { range: args.range } : {})
+  } } };
+}
+
 function guardRpcMemberRequest({ config, ownership, user, method, payload }) {
   if (!record(payload) || Object.keys(payload).length !== 1 || !record(payload.args))
     return { ok: false, message: "Remote 请求必须只有对象 args" };
@@ -329,6 +363,8 @@ function guardRpcMemberRequest({ config, ownership, user, method, payload }) {
     }
     return { ok: true, payload };
   }
+  if (method === "workspaceFiles/read")
+    return guardWorkspaceFileRead({ config, ownership, user, args });
   if (!RPC_SESSION_METHODS.has(method) && !RPC_WORKSPACE_METHODS.has(method))
     return { ok: false, message: `方法 ${method} 不在 Member 白名单` };
   // Each guarded unary method has a known, mandatory ownership-bearing wire
@@ -501,7 +537,7 @@ export function guardMemberRequest({ config, ownership, user, method, payload })
   return { ok: true, payload: p };
 }
 
-export function filterMemberResponse({ config, ownership, user, method, value }) {
+export function filterMemberResponse({ config, ownership, user, method, value, args = null }) {
   if (method === "permissionPresets/catalog") {
     if (!record(value) || !Array.isArray(value.options) || !Array.isArray(value.defaultOptions) ||
         typeof value.defaultPreset !== "string") throw new TypeError("invalid permission catalog");
@@ -670,6 +706,32 @@ export function filterMemberResponse({ config, ownership, user, method, value })
       if (projected !== undefined) values[key] = projected;
     }
     return { asOfSeq: value.asOfSeq, values };
+  }
+  if (method === "workspaceFiles/read") {
+    if (!record(value) || !record(args) || typeof args.workspaceFileScopeId !== "string" ||
+        typeof args.path !== "string" || !args.path ||
+        typeof value.text !== "string" || value.text.length > 5_000_000 ||
+        !Number.isSafeInteger(value.offset) || value.offset < 0 ||
+        !Number.isSafeInteger(value.lines) || value.lines < 0 ||
+        typeof value.eof !== "boolean" || typeof value.absolutePath !== "string" ||
+        typeof value.version !== "string" ||
+        (value.bytes !== undefined && (!Number.isSafeInteger(value.bytes) || value.bytes < 0)))
+      throw new TypeError("invalid workspace file read");
+    const workspaceId = ownership.sessionWorkspace.get(args.workspaceFileScopeId);
+    const root = ownership.workspacePath.get(workspaceId);
+    if (typeof root !== "string" || root === "ambiguous")
+      throw new TypeError("invalid workspace file scope");
+    const expected = path.resolve(root, args.path);
+    let realExpected;
+    let realActual;
+    try {
+      realExpected = fs.realpathSync(expected);
+      realActual = fs.realpathSync(value.absolutePath);
+    } catch { throw new TypeError("invalid workspace file path"); }
+    if (realExpected !== realActual) throw new TypeError("workspace file response mismatch");
+    return { offset: value.offset, text: value.text, lines: value.lines, eof: value.eof,
+      absolutePath: args.path, version: value.version,
+      ...(value.bytes !== undefined ? { bytes: value.bytes } : {}) };
   }
   if (value === null || typeof value !== "object") return value;
   // 0.2 session/list is a unary RPC. Unknown sessions and
