@@ -9,6 +9,7 @@ export function projectUserMessage(data, ownsSession) {
     // Attachments can point at Host or foreign-member files; keep the message
     // and its sequence while withholding the binary reference itself.
     if (block.type === "image") return { type: "text", text: "[Image withheld by Team Hub]" };
+    if (block.type === "file") return { type: "text", text: "[File withheld by Team Hub]" };
     return null;
   });
   if (content.some(block => !block)) return null;
@@ -34,6 +35,8 @@ export function projectUserMessage(data, ownsSession) {
   else if (source.kind === "model-selection" && source.form === "notice" &&
     typeof source.summary === "string")
     projectedSource = { kind: "model-selection", form: "notice", summary: "Model selection notice" };
+  else if (source.kind === "agent-instructions" && source.form === "instructions")
+    projectedSource = { kind: "agent-instructions", form: "instructions" };
   else if (source.kind === "schedule" && source.form === undefined)
     projectedSource = { kind: "schedule" };
   else if (source.kind === "schedule" && source.form === "notice" &&
@@ -80,6 +83,7 @@ export function projectUserMessage(data, ownsSession) {
   // Keep their journal sequence and provenance, but never forward assembled text.
   return { id: data.id, role: "user",
     content: projectedSource.kind === "runtime-context" ? [{ type: "text", text: "[Runtime context withheld by Team Hub]" }] :
-      projectedSource.kind === "skill-catalog" ? [{ type: "text", text: "[Skill catalog withheld by Team Hub]" }] : content,
+      projectedSource.kind === "skill-catalog" ? [{ type: "text", text: "[Skill catalog withheld by Team Hub]" }] :
+      projectedSource.kind === "agent-instructions" ? [{ type: "text", text: "[Agent instructions withheld by Team Hub]" }] : content,
     source: projectedSource };
 }

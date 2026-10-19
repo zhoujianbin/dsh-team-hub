@@ -532,6 +532,23 @@ test("member history pages reject foreign child catalog and strip Host metadata"
   assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
     value: { records: [modelNotice], hasMore: false } }).records[0].event.data.source,
     { kind: "model-selection", form: "notice", summary: "Model selection notice" });
+  const fileMessage = { ...userMessage, event: { ...userMessage.event,
+    data: { ...userMessage.event.data, content: [
+      { type: "file", attachment: { path: "operator/private" } },
+      { type: "text", text: "hello" }] } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [fileMessage], hasMore: false } }).records[0].event.data,
+    { id: "u", role: "user", content: [
+      { type: "text", text: "[File withheld by Team Hub]" },
+      { type: "text", text: "hello" }],
+      source: { kind: "agent-message", form: "relay", senderSessionId: "sa" } });
+  const instructions = { ...userMessage, event: { ...userMessage.event,
+    data: { ...userMessage.event.data, source: { kind: "agent-instructions", form: "instructions",
+      baseline: true, changes: [{ path: "operator/private" }], hostSecret: "private" } } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [instructions], hasMore: false } }).records[0].event.data,
+    { id: "u", role: "user", content: [{ type: "text", text: "[Agent instructions withheld by Team Hub]" }],
+      source: { kind: "agent-instructions", form: "instructions" } });
   const approvalReply = { ...userMessage, event: { ...userMessage.event,
     data: { ...userMessage.event.data, source: { kind: "user-approval" } } } };
   assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
@@ -725,6 +742,14 @@ test("member history pages reject foreign child catalog and strip Host metadata"
     value: { records: [{ ...toolChange, event: { ...toolChange.event,
       data: { ...toolChange.event.data, headerSeq: undefined } } }], hasMore: false } }), /unauthorized/);
 
+  const registryChange = { ...developer, event: { ...developer.event, data: {
+    ...developer.event.data, message: { ...developer.event.data.message,
+      source: { kind: "tool-registry" },
+      content: [{ type: "tool-removal", toolName: "ssh_exec" }] } } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [registryChange], hasMore: false } }).records[0].event.data,
+    { turn: 1, step: 1, message: { id: "dev", role: "developer", source: { kind: "tool-registry" },
+      content: [{ type: "text", text: "[Host tool changes withheld by Team Hub]" }] } });
   const missingSurface = { ...good, event: { ...good.event, surfaceOp: undefined } };
   assert.throws(() => filterMemberResponse({ ownership, user: alice, method: "session/page",
     value: { records: [missingSurface], hasMore: false } }), /unauthorized/);

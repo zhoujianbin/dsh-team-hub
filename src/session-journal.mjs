@@ -162,12 +162,14 @@ export function projectMemberJournalEvent(event, ownsSession) {
     if (data.headerSeq !== undefined &&
         (!Number.isSafeInteger(data.headerSeq) || data.headerSeq < 0 || data.headerSeq >= event.seq)) return null;
     const source = data.message.source;
-    if (source.kind !== "user") return null;
+    if (!["user", "tool-registry"].includes(source.kind)) return null;
     return { type: event.type, seq: event.seq, time: event.time, data: {
       turn: data.turn, step: data.step, message: { id: data.message.id, role: "developer",
-        content: content.map(block => block.type === "text"
-          ? { type: "text", text: "[Developer message withheld by Team Hub]" } : block),
-        source: { kind: "user" } },
+        content: source.kind === "tool-registry"
+          ? [{ type: "text", text: "[Host tool changes withheld by Team Hub]" }]
+          : content.map(block => block.type === "text"
+            ? { type: "text", text: "[Developer message withheld by Team Hub]" } : block),
+        source: { kind: source.kind } },
       ...(data.headerSeq !== undefined ? { headerSeq: data.headerSeq } : {}) },
       ...(event.ignorable === true ? { ignorable: true } : {}), ...surface };
   }
