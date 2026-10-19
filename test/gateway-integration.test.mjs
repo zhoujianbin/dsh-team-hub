@@ -337,6 +337,10 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
       assert.equal((await request(bad, { headers: { cookie: alice } })).status, 403);
     assert.equal((await request("/admin/", { headers: { cookie: alice } })).status, 403);
     assert.equal((await request("/admin", { headers: { cookie: admin } })).status, 302);
+    const pickerModule = await request("/admin/share-state.js", { headers: { cookie: admin } });
+    assert.equal(pickerModule.status, 200);
+    assert.equal(pickerModule.headers.get("cache-control"), "no-store");
+    assert.match(await pickerModule.text(), /moveShareMembers/);
     assert.equal((await request("/__teamhub/api/users", { headers: { cookie: admin } })).status, 200);
     assert.equal((await request("/api/session/list?token=" + token, { headers: { cookie: admin } })).status, 400);
     const rpc = async (cookie, method, payload = { args: { _request: {} } }, prefix = "/api/") => {

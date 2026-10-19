@@ -379,7 +379,7 @@ function serveAdminUi(res, pathname) {
   // readFileSync 返回 Buffer，send() 会对非 string body 走 JSON.stringify，
   // 导致 admin 页面返回 {"type":"Buffer","data":[...]} 而不是 HTML（Issue #1）。
   // 显式读成 utf8 字符串，让 send 按文本发送。
-  send(res, 200, fs.readFileSync(target, "utf8"), { "content-type": type + "; charset=utf-8" });
+  send(res, 200, fs.readFileSync(target, "utf8"), { "content-type": type + "; charset=utf-8", "cache-control": "no-store" });
   return true;
 }
 
