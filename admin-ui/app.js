@@ -156,8 +156,8 @@ function openShareDialog({ workspace, users, onSubmit }) {
           <div class="listbox" data-list="granted" role="listbox" aria-multiselectable="true" aria-labelledby="granted-heading" tabindex="0"></div>
         </section>
         <div class="move-buttons">
-          <button type="button" class="secondary" data-move="revoke" aria-label="移除所选成员的权限" title="移除所选成员的权限" disabled>←</button>
-          <button type="button" class="secondary" data-move="grant" aria-label="授权所选成员" title="授权所选成员" disabled>→</button>
+          <button type="button" class="secondary" data-move="revoke" aria-label="移除所选成员的权限" title="移除所选成员的权限" disabled>→</button>
+          <button type="button" class="secondary" data-move="grant" aria-label="授权所选成员" title="授权所选成员" disabled>←</button>
         </div>
         <section class="dual-list-column" aria-labelledby="available-heading">
           <h3 class="dual-list-heading" id="available-heading">尚未授权 <span class="count" data-count="available">0</span></h3>

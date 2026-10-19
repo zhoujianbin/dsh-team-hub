@@ -17,7 +17,10 @@ test("admin workspace sharing uses a two-column picker instead of free-text user
   const app = fs.readFileSync(path.join(root, "admin-ui", "app.js"), "utf8");
   assert.ok(app.includes('role="dialog"'), "sharing must open a modal dialog");
   assert.ok(app.includes('data-list="granted"') && app.includes('data-list="available"'), "dialog must render two member columns");
-  assert.ok(app.includes('data-move="grant"') && app.includes('data-move="revoke"'), "dialog must move members with arrow buttons");
+  assert.ok(app.includes('data-move="grant" aria-label="授权所选成员" title="授权所选成员" disabled>←</button>'),
+    "the left arrow must grant the selected right-column member");
+  assert.ok(app.includes('data-move="revoke" aria-label="移除所选成员的权限" title="移除所选成员的权限" disabled>→</button>'),
+    "the right arrow must revoke the selected left-column member");
   assert.ok(!app.includes("prompt(`设置"), "sharing must not ask the administrator to type usernames");
 });
 
