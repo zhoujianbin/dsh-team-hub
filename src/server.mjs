@@ -8,7 +8,7 @@ import { authenticate, changePassword, publicUser } from "./users.mjs";
 import { parseCookies, resolveSession, issueSession, revokeSession } from "./auth.mjs";
 import { AuditLog } from "./audit.mjs";
 import { createAdminApi } from "./admin-api.mjs";
-import { createOwnership, guardMemberRequest, filterMemberResponse, learnWorkspace, learnSession } from "./policy.mjs";
+import { createOwnership, guardMemberRequest, filterMemberResponse, learnWorkspace, learnSession, resolveSessionOwnership } from "./policy.mjs";
 import { upstreamRpc } from "./upstream.mjs";
 import { findDshRoot, applySettingsPatch, settingsPatchStatus } from "./patch.mjs";
 import { filterHostFrame, filterMuxFrame, isAllowedClientFrame } from "./ws-filter.mjs";
@@ -163,13 +163,16 @@ async function refreshOwnership(context) {
     const sessions = await upstreamRpc(context.config, "session/list", { args: { _request: {} } });
     if (!Array.isArray(sessions?.items)) throw new Error("session/list returned invalid inventory");
     const current = createOwnership();
-    for (const row of sessions.items) learnSession(context.config, current, row.sessionId, row.cwd, null);
+    for (const row of sessions.items) learnSession(context.config, current, row.sessionId, row.cwd, null, row.parentSessionId);
     for (const view of workspaces.items) learnWorkspace(context.config, current, view);
+    resolveSessionOwnership(context.config, current);
     context.ownership.workspaceOwner = current.workspaceOwner;
     context.ownership.workspacePath = current.workspacePath;
     context.ownership.workspaceTitle = current.workspaceTitle;
     context.ownership.sessionOwner = current.sessionOwner;
     context.ownership.sessionWorkspace = current.sessionWorkspace;
+    context.ownership.sessionParent = current.sessionParent;
+    context.ownership.sessionCwd = current.sessionCwd;
     return true;
   } catch (error) {
     context.audit.write("system.ownership-refresh-failed", { error: error.message });

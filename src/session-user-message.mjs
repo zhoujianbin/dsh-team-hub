@@ -3,8 +3,14 @@ const record = value => value !== null && typeof value === "object" && !Array.is
 export function projectUserMessage(data, ownsSession) {
   if (!record(data) || data.role !== "user" || typeof data.id !== "string" ||
       !record(data.source) || !Array.isArray(data.content)) return null;
-  const content = data.content.map(block => record(block) && block.type === "text" &&
-    typeof block.text === "string" ? { type: "text", text: block.text } : null);
+  const content = data.content.map(block => {
+    if (!record(block)) return null;
+    if (block.type === "text" && typeof block.text === "string") return { type: "text", text: block.text };
+    // Attachments can point at Host or foreign-member files; keep the message
+    // and its sequence while withholding the binary reference itself.
+    if (block.type === "image") return { type: "text", text: "[Image withheld by Team Hub]" };
+    return null;
+  });
   if (content.some(block => !block)) return null;
   const source = data.source;
   let projectedSource;
@@ -25,6 +31,9 @@ export function projectUserMessage(data, ownsSession) {
       typeof source.senderSessionId === "string" && ownsSession(source.senderSessionId))
     projectedSource = { kind: "subagent-settled", form: "notice",
       summary: "Subagent settled", senderSessionId: source.senderSessionId };
+  else if (source.kind === "model-selection" && source.form === "notice" &&
+    typeof source.summary === "string")
+    projectedSource = { kind: "model-selection", form: "notice", summary: "Model selection notice" };
   else if (source.kind === "schedule" && source.form === undefined)
     projectedSource = { kind: "schedule" };
   else if (source.kind === "schedule" && source.form === "notice" &&

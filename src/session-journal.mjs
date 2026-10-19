@@ -617,7 +617,7 @@ export function projectMemberJournalEvent(event, ownsSession) {
       if (typeof data.provider !== "string" || !data.provider ||
           !["normal", "always"].includes(data.mode) ||
           typeof data.policyKey !== "string" || !data.policyKey ||
-          !Number.isSafeInteger(data.delayMs) || data.delayMs < 0 ||
+          !Number.isFinite(data.delayMs) || data.delayMs < 0 ||
           (data.mode === "normal" && (!Number.isSafeInteger(data.maxRetries) || data.maxRetries < 0)) ||
           !record(data.failure) || typeof data.failure.code !== "string" ||
           typeof data.failure.message !== "string") return null;

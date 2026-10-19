@@ -34,7 +34,8 @@ export const MEMBER_GUARDED = new Set([
 ]);
 
 export function createOwnership() {
-  return { workspaceOwner: new Map(), sessionOwner: new Map(), sessionWorkspace: new Map(), workspacePath: new Map(), workspaceTitle: new Map() };
+  return { workspaceOwner: new Map(), sessionOwner: new Map(), sessionWorkspace: new Map(),
+    workspacePath: new Map(), workspaceTitle: new Map(), sessionParent: new Map(), sessionCwd: new Map() };
 }
 
 export function userRoot(config, user) {
@@ -108,13 +109,61 @@ export function learnWorkspace(config, ownership, view) {
   }
 }
 
-export function learnSession(config, ownership, sessionId, cwd, fallbackOwner = null) {
+export function learnSession(config, ownership, sessionId, cwd, fallbackOwner = null, parentSessionId = null) {
   if (typeof sessionId !== "string" || !sessionId) return;
+  if (typeof cwd === "string" && cwd) {
+    const priorCwd = ownership.sessionCwd.get(sessionId);
+    if (!priorCwd) ownership.sessionCwd.set(sessionId, cwd);
+    else if (priorCwd !== cwd) ownership.sessionCwd.set(sessionId, "ambiguous");
+  }
+  if (typeof parentSessionId === "string" && parentSessionId) {
+    const priorParent = ownership.sessionParent.get(sessionId);
+    if (!priorParent) ownership.sessionParent.set(sessionId, parentSessionId);
+    else if (priorParent !== parentSessionId) ownership.sessionParent.set(sessionId, "ambiguous");
+  }
   const owner = (cwd && ownerOfPath(config, cwd)) || fallbackOwner;
   if (!owner || ownership.sessionOwner.get(sessionId) === "ambiguous") return;
   const prior = ownership.sessionOwner.get(sessionId);
   if (!prior || prior === "admin") ownership.sessionOwner.set(sessionId, owner);
   else if (owner !== "admin" && prior !== owner) ownership.sessionOwner.set(sessionId, "ambiguous");
+}
+
+function pathWithin(root, candidate) {
+  try {
+    const realRoot = fs.realpathSync(root);
+    const realCandidate = fs.realpathSync(candidate);
+    return realCandidate === realRoot || realCandidate.startsWith(realRoot + path.sep);
+  } catch { return false; }
+}
+
+// DSH subagent sessions are normally absent from the workspace inventory but
+// reference their parent session. A shared parent must carry access to its
+// children only when the child cwd is still inside the same trusted workspace.
+export function resolveSessionOwnership(config, ownership) {
+  const parents = ownership.sessionParent;
+  if (!(parents instanceof Map) || !(ownership.sessionCwd instanceof Map)) return;
+  for (let pass = 0; pass < 16; pass++) {
+    let changed = false;
+    for (const [sessionId, parentSessionId] of parents) {
+      if (!parentSessionId || parentSessionId === "ambiguous" || parentSessionId === sessionId) continue;
+      const owner = ownership.sessionOwner.get(sessionId);
+      const workspaceId = ownership.sessionWorkspace.get(sessionId);
+      if (owner === "ambiguous" || workspaceId === "ambiguous") continue;
+      if (owner && workspaceId) continue;
+      const parentOwner = ownership.sessionOwner.get(parentSessionId);
+      const parentWorkspace = ownership.sessionWorkspace.get(parentSessionId);
+      if (!parentOwner || parentOwner === "ambiguous" || !parentWorkspace || parentWorkspace === "ambiguous") continue;
+      const parentPath = ownership.workspacePath.get(parentWorkspace);
+      if (typeof parentPath !== "string" || parentPath === "ambiguous") continue;
+      const cwd = ownership.sessionCwd.get(sessionId);
+      if (typeof cwd !== "string" || cwd === "ambiguous" || !pathWithin(parentPath, cwd)) continue;
+      if (owner && owner !== parentOwner) { ownership.sessionOwner.set(sessionId, "ambiguous"); continue; }
+      if (workspaceId && workspaceId !== parentWorkspace) { ownership.sessionWorkspace.set(sessionId, "ambiguous"); continue; }
+      if (!owner) { ownership.sessionOwner.set(sessionId, parentOwner); changed = true; }
+      if (!workspaceId) { ownership.sessionWorkspace.set(sessionId, parentWorkspace); changed = true; }
+    }
+    if (!changed) break;
+  }
 }
 
 export function canAccessWorkspace(config, ownership, user, id) {
@@ -627,6 +676,12 @@ export function filterMemberResponse({ config, ownership, user, method, value })
   // cross-member subagents cannot be returned even if their cwd looks local.
   if (method === "session/list" || method === "session/search") {
     if (!Array.isArray(value.items)) throw new TypeError(`${method} returned an invalid member-filterable result`);
+    if (config) {
+      for (const row of value.items) {
+        if (record(row)) learnSession(config, ownership, row.sessionId, row.cwd, null, row.parentSessionId);
+      }
+      resolveSessionOwnership(config, ownership);
+    }
     const items = value.items.filter(s =>
       record(s) && (config ? canAccessSession(config, ownership, user, s.sessionId) :
         ownership.sessionOwner.get(s.sessionId) === user.name) &&

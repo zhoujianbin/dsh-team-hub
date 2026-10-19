@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createOwnership, guardMemberRequest, filterMemberResponse, learnWorkspace, learnSession, userRoot } from "../src/policy.mjs";
+import fs from "node:fs";
+import { createOwnership, guardMemberRequest, filterMemberResponse, learnWorkspace, learnSession,
+  userRoot, canAccessSession, resolveSessionOwnership } from "../src/policy.mjs";
 import { defaultConfig } from "../src/config.mjs";
 import { createUser } from "../src/users.mjs";
 
@@ -10,6 +12,8 @@ function fixture() {
   createUser(config, { name: "alice", role: "member", password: "alice-pass-1" });
   createUser(config, { name: "bob", role: "member", password: "bob-pass-123" });
   const ownership = createOwnership();
+  fs.mkdirSync("/tmp/dsh-team-hub-test/workspaces/alice", { recursive: true });
+  fs.mkdirSync("/tmp/dsh-team-hub-test/workspaces/bob", { recursive: true });
   learnWorkspace(config, ownership, { workspaceId: "wa", path: "/tmp/dsh-team-hub-test/workspaces/alice", sessionIds: ["sa"] });
   learnWorkspace(config, ownership, { workspaceId: "wb", path: "/tmp/dsh-team-hub-test/workspaces/bob", sessionIds: ["sb"] });
   return { config, ownership, alice: config.users[1], bob: config.users[2] };
@@ -71,6 +75,25 @@ test("share grants fail closed on changed owner path and cross-workspace session
     payload: { args: { request: { sessionId: "sb" } } } }).ok, false);
   ownership.workspacePath.delete("wb");
   assert.deepEqual(list(undefined), []);
+});
+
+test("shared subagent sessions inherit access only within the parent workspace", () => {
+  const { config, ownership, alice } = fixture();
+  config.workspaceShares.wb = ["alice"];
+  const bobRoot = "/tmp/dsh-team-hub-test/workspaces/bob";
+  fs.mkdirSync(bobRoot + "/sub/deep", { recursive: true });
+  learnSession(config, ownership, "child-shared", bobRoot + "/sub", null, "sb");
+  learnSession(config, ownership, "child-nested", bobRoot + "/sub/deep", null, "child-shared");
+  learnSession(config, ownership, "child-outside", "/tmp/dsh-team-hub-test/operator/sub", null, "sb");
+  learnSession(config, ownership, "child-conflict", bobRoot + "/sub/conflict", "alice", "sb");
+  resolveSessionOwnership(config, ownership);
+  assert.equal(canAccessSession(config, ownership, alice, "child-shared"), true);
+  assert.equal(canAccessSession(config, ownership, alice, "child-nested"), true);
+  assert.equal(canAccessSession(config, ownership, alice, "child-outside"), false);
+  assert.equal(canAccessSession(config, ownership, alice, "child-conflict"), false);
+  assert.equal(ownership.sessionWorkspace.get("child-shared"), "wb");
+  assert.equal(ownership.sessionOwner.get("child-shared"), "bob");
+  assert.equal(ownership.sessionWorkspace.get("child-nested"), "wb");
 });
 
 test("rename RPCs accept only their scoped ID and title", () => {
@@ -493,6 +516,22 @@ test("member history pages reject foreign child catalog and strip Host metadata"
     value: { records: [skillCatalog], hasMore: false } }).records[0].event.data,
     { id: "u", role: "user", content: [{ type: "text", text: "[Skill catalog withheld by Team Hub]" }],
       source: { kind: "skill-catalog", form: "catalog", entries: [] } });
+  const imageMessage = { ...userMessage, event: { ...userMessage.event,
+    data: { ...userMessage.event.data, content: [
+      { type: "image", attachmentId: "operator/private", width: 1 },
+      { type: "text", text: "hello" }] } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [imageMessage], hasMore: false } }).records[0].event.data,
+    { id: "u", role: "user", content: [
+      { type: "text", text: "[Image withheld by Team Hub]" },
+      { type: "text", text: "hello" }],
+      source: { kind: "agent-message", form: "relay", senderSessionId: "sa" } });
+  const modelNotice = { ...userMessage, event: { ...userMessage.event,
+    data: { ...userMessage.event.data, source: { kind: "model-selection", form: "notice",
+      summary: "operator/private", hostSecret: "private" } } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [modelNotice], hasMore: false } }).records[0].event.data.source,
+    { kind: "model-selection", form: "notice", summary: "Model selection notice" });
   const approvalReply = { ...userMessage, event: { ...userMessage.event,
     data: { ...userMessage.event.data, source: { kind: "user-approval" } } } };
   assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
@@ -861,6 +900,12 @@ test("member history pages reject foreign child catalog and strip Host metadata"
       secret: "private" },
       { retryId: "retry-1", turn: 1, step: 0, provider: "mock", mode: "normal",
         policyKey: "rate-limit", retry: 1, maxRetries: 3, delayMs: 100,
+        failure: { code: "THROTTLE", message: "Model request failed" } }],
+    ["llm/retry", { retryId: "retry-2", turn: 1, step: 1, provider: "mock",
+      mode: "normal", policyKey: "rate-limit", retry: 2, maxRetries: 3, delayMs: 100.5,
+      failure: { code: "THROTTLE", message: "Host credential" }, secret: "private" },
+      { retryId: "retry-2", turn: 1, step: 1, provider: "mock", mode: "normal",
+        policyKey: "rate-limit", retry: 2, maxRetries: 3, delayMs: 100.5,
         failure: { code: "THROTTLE", message: "Model request failed" } }],
     ["llm/retry-started", { retryId: "retry-1", turn: 1, step: 0, retry: 1, secret: "private" },
       { retryId: "retry-1", turn: 1, step: 0, retry: 1 }],

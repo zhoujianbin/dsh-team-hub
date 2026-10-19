@@ -1,4 +1,4 @@
-import { ownedBy, learnWorkspace, userRoot, canAccessWorkspace, canAccessSession, canAccessPath } from "./policy.mjs";
+import { ownedBy, learnWorkspace, learnSession, resolveSessionOwnership, userRoot, canAccessWorkspace, canAccessSession, canAccessPath } from "./policy.mjs";
 import { MEMBER_PROJECTION_KEYS, projectMemberProjection } from "./session-projections.mjs";
 import { projectMemberJournalEvent } from "./session-journal.mjs";
 
@@ -295,10 +295,14 @@ export function filterRemoteServerFrame({ config, ownership, user, streams, fram
     }
     if (value.type !== "emit" || !Array.isArray(value.args)) return null;
     const args = value.args;
-    if (value.event === "api-session/added" && args.length === 1 && record(args[0]) &&
-        ownSession(ownership, user, args[0].sessionId, config) &&
-        (!args[0].parentSessionId || ownSession(ownership, user, args[0].parentSessionId, config))) {
+    if (value.event === "api-session/added" && args.length === 1 && record(args[0])) {
       const summary = args[0];
+      if (typeof summary.sessionId === "string") {
+        learnSession(config, ownership, summary.sessionId, summary.cwd, null, summary.parentSessionId);
+        resolveSessionOwnership(config, ownership);
+      }
+      if (!ownSession(ownership, user, summary.sessionId, config) ||
+          (summary.parentSessionId && !ownSession(ownership, user, summary.parentSessionId, config))) return null;
       if (summary.cwd !== undefined && (typeof summary.cwd !== "string" ||
           !canAccessPath(config, ownership, user, summary.cwd,
             ownership.sessionOwner.get(summary.sessionId) === user.name ? undefined : ownership.sessionWorkspace.get(summary.sessionId)))) return null;
