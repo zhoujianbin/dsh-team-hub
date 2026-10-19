@@ -171,24 +171,54 @@ async function refreshOwnership(context) {
   }
 }
 
+async function ensureMemberWorkspace(context, user) {
+  if (user.role !== "member" || (user.status || "active") !== "active") return null;
+  const running = context.workspaceProvisioning.get(user.name);
+  if (running) return running;
+  const provision = provisionMemberWorkspace(context, user);
+  context.workspaceProvisioning.set(user.name, provision);
+  try { return await provision; }
+  finally { context.workspaceProvisioning.delete(user.name); }
+}
+
+async function provisionMemberWorkspace(context, user) {
+  const root = path.join(context.config.workspaceRoot, user.name);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  if (fs.lstatSync(root).isSymbolicLink() || !fs.lstatSync(root).isDirectory() ||
+      path.dirname(fs.realpathSync(root)) !== fs.realpathSync(context.config.workspaceRoot))
+    throw new Error("unsafe member workspace directory");
+  const existing = [...context.ownership.workspaceOwner.entries()].find(([, owner]) => owner === user.name);
+  if (existing) return { workspaceId: existing[0], title: user.name, path: root };
+  try {
+    const created = await upstreamRpc(context.config, "workspace/create", { args: { request: { path: root } } });
+    let workspace = created?.workspace;
+    if (!workspace || typeof workspace.workspaceId !== "string" || !workspace.workspaceId ||
+        typeof workspace.path !== "string" || fs.realpathSync(workspace.path) !== fs.realpathSync(root))
+      throw new Error("workspace/create returned an invalid member workspace");
+    learnWorkspace(context.config, context.ownership, workspace);
+    if (context.ownership.workspaceOwner.get(workspace.workspaceId) !== user.name)
+      throw new Error("workspace/create did not bind the member owner");
+    if (workspace.title !== user.name) {
+      const renamed = await upstreamRpc(context.config, "workspace/rename", { args: { request: { workspaceId: workspace.workspaceId, title: user.name } } });
+      workspace = renamed?.workspace;
+      if (!workspace || workspace.workspaceId !== created.workspace.workspaceId ||
+          typeof workspace.path !== "string" || fs.realpathSync(workspace.path) !== fs.realpathSync(root) ||
+          workspace.title !== user.name) throw new Error("workspace/rename returned an invalid member workspace");
+      learnWorkspace(context.config, context.ownership, workspace);
+    }
+    if (context.ownership.workspaceOwner.get(workspace.workspaceId) !== user.name)
+      throw new Error("workspace owner changed during creation");
+    context.audit.write("workspace.created", { user: user.name, workspaceId: workspace.workspaceId });
+    return workspace;
+  } catch (error) {
+    context.audit.write("workspace.create-failed", { user: user.name, error: error.message });
+    throw error;
+  }
+}
+
 async function ensureMemberWorkspaces(context) {
   for (const user of context.config.users) {
-    if (user.role !== "member" || (user.status || "active") !== "active") continue;
-    const root = path.join(context.config.workspaceRoot, user.name);
-    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-    const existing = [...context.ownership.workspaceOwner.entries()].find(([, owner]) => owner === user.name);
-    if (existing) continue;
-    try {
-      const created = await upstreamRpc(context.config, "workspace/create", { args: { request: { path: root } } });
-      learnWorkspace(context.config, context.ownership, created.workspace);
-      if (created.workspace.title !== user.name) {
-        const renamed = await upstreamRpc(context.config, "workspace/rename", { args: { request: { workspaceId: created.workspace.workspaceId, title: user.name } } });
-        learnWorkspace(context.config, context.ownership, renamed.workspace);
-      }
-      context.audit.write("workspace.created", { user: user.name });
-    } catch (error) {
-      context.audit.write("workspace.create-failed", { user: user.name, error: error.message });
-    }
+    try { await ensureMemberWorkspace(context, user); } catch {}
   }
 }
 
@@ -294,7 +324,8 @@ async function handleAdminApi(context, req, res, pathname, query) {
   if (req.method === "GET" && pathname === "/users") return send(res, 200, api.users());
   if (req.method === "POST" && pathname === "/users") {
     const body = JSON.parse((await collect(req)).toString("utf8") || "{}");
-    return send(res, 200, api.createUser(body));
+    try { return send(res, 200, await api.createUser(body)); }
+    catch (error) { return send(res, 409, { error: error.message }); }
   }
   const statusMatch = pathname.match(/^\/users\/([^/]+)\/status$/);
   if (req.method === "POST" && statusMatch) {
@@ -336,6 +367,7 @@ export async function startServer() {
     config,
     browserAuth: new DshBrowserAuth(config),
     ownership: createOwnership(),
+    workspaceProvisioning: new Map(),
     memberSettings: memberWelcomeSettings(home),
     eventClients: new Map(),
     audit: new AuditLog(home),
@@ -363,7 +395,8 @@ export async function startServer() {
     getConfig: () => context.config,
     save: next => { context.config = next; saveConfig(home, next); },
     ownership: context.ownership,
-    audit: context.audit
+    audit: context.audit,
+    ensureUserWorkspace: user => ensureMemberWorkspace(context, user)
   });
   // 远程设置补丁：局域网/域名访问时 dsh 客户端 settings 会走 memory 模式导致
   // 「加载提供方目录失败: settings are unavailable in this browser」（Issue #2，上游

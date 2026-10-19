@@ -1,7 +1,7 @@
 import { publicUser, createUser, setUserStatus, resetPassword, setDisplayName } from "./users.mjs";
 import { revokeSessionsForUser } from "./auth.mjs";
 
-export function createAdminApi({ home, getConfig, save, ownership, audit }) {
+export function createAdminApi({ home, getConfig, save, ownership, audit, ensureUserWorkspace }) {
   return {
     overview() {
       const config = getConfig();
@@ -14,12 +14,29 @@ export function createAdminApi({ home, getConfig, save, ownership, audit }) {
       };
     },
     users() { return getConfig().users.map(publicUser); },
-    createUser(input) {
+    async createUser(input) {
       const config = getConfig();
       const result = createUser(config, { name: input.name, role: input.role || "member" });
       save(config);
-      audit.write("admin.user-created", { user: input.name, role: result.user.role });
-      return { user: publicUser(result.user), initialPassword: result.initialPassword };
+      let workspace = null;
+      if (result.user.role === "member") {
+        try {
+          if (!ensureUserWorkspace) throw new Error("workspace provisioner unavailable");
+          workspace = await ensureUserWorkspace(result.user);
+          if (!workspace || typeof workspace.workspaceId !== "string" || !workspace.workspaceId)
+            throw new Error("workspace creation returned no ID");
+        } catch {
+          // Never report success for an unusable account or expose its one-time
+          // password. Keep it disabled for an administrator to inspect/retry.
+          result.user.status = "disabled";
+          result.user.updatedAt = new Date().toISOString();
+          save(config);
+          audit.write("admin.user-workspace-failed", { user: result.user.name });
+          throw new Error("账号已创建但工作区未就绪；账号已禁用，请检查 DSH 后重试");
+        }
+      }
+      audit.write("admin.user-created", { user: input.name, role: result.user.role, workspaceCreated: Boolean(workspace) });
+      return { user: publicUser(result.user), initialPassword: result.initialPassword, workspace };
     },
     setUserStatus(name, status) {
       const config = getConfig();

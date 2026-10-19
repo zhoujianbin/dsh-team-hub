@@ -63,8 +63,13 @@ async function renderUsers() {
   document.querySelector("#create-user").onsubmit = async event => {
     event.preventDefault();
     const form = new FormData(event.target);
-    const result = await api("/users", { method: "POST", body: { name: form.get("name"), role: form.get("role") } });
-    pendingMessage = `初始密码：<code class="mono">${esc(result.initialPassword)}</code>（只显示一次）`;
+    try {
+      const result = await api("/users", { method: "POST", body: { name: form.get("name"), role: form.get("role") } });
+      const workspaceMessage = result.workspace ? `工作区已创建：${esc(result.workspace.title || result.user.name)}；` : "";
+      pendingMessage = `${workspaceMessage}初始密码：<code class="mono">${esc(result.initialPassword)}</code>（只显示一次）`;
+    } catch (error) {
+      pendingMessage = `<span class="error">${esc(error.message)}</span>`;
+    }
     await renderUsers();
   };
   app.onclick = async event => {

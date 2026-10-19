@@ -121,7 +121,7 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     const sessions = ["alice", "bob"].map(name => ({ sessionId: "session-" + name, cwd: roots[name] }));
     const token = crypto.randomBytes(32).toString("base64url");
     const dshCookie = "dsh-auth-test=v1." + crypto.randomBytes(12).toString("base64url") + "." + crypto.randomBytes(12).toString("base64url");
-    const seen = { exchange: 0, rpc: [], opens: [], cookies: [], eventReplies: [], rejectNextEventResult: false, peers: new Set(), prompts: [] };
+    const seen = { exchange: 0, rpc: [], opens: [], cookies: [], eventReplies: [], rejectNextEventResult: false, failWorkspaceFor: null, peers: new Set(), prompts: [] };
     upstream = http.createServer(async (req, res) => {
       const url = new URL(req.url, "http://127.0.0.1");
       if (url.pathname === "/" && url.searchParams.get("token") === token) {
@@ -137,6 +137,11 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
         try { body = JSON.parse(await new Promise((resolve, reject) => { let chunks = ""; req.on("data", c => { chunks += c; }); req.on("end", () => resolve(chunks)); req.on("error", reject); })); }
         catch { res.writeHead(400).end(); return; }
         seen.rpc.push(body.method);
+        if (body.method === "workspace/create" && path.basename(body.payload.args.request.path) === seen.failWorkspaceFor) {
+          res.writeHead(503, { "content-type": "application/json" });
+          res.end(JSON.stringify({ type: "server-response", rpcId: body.rpcId, result: { ok: false, error: { code: "internal", message: "private upstream diagnostics" } } }));
+          return;
+        }
         if (body.method === "$events/result") {
           seen.eventReplies.push(body.payload.args);
           if (seen.rejectNextEventResult) {
@@ -156,7 +161,7 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
             hasMore: false, hostSecret: "tenant-leak" }
           : body.method === "session/list" ? { items: sessions, total: 2, operatorHome: "/operator/private" }
           : body.method === "settings/describe" ? { writable: true, hasDocument: true, namespaces: [{ ns: "llm", schema: { apiKey: "tenant-leak" }, value: { apiKey: "tenant-leak" } }] }
-          : body.method === "workspace/create" ? { workspace: { workspaceId: "created", title: "alice", path: body.payload.args.request.path, sessionIds: [] } }
+          : body.method === "workspace/create" ? { workspace: { workspaceId: "created-" + path.basename(body.payload.args.request.path), title: path.basename(body.payload.args.request.path), path: body.payload.args.request.path, sessionIds: [] } }
           : { unknown: true };
         res.writeHead(200, { "content-type": "application/json", "set-cookie": "upstream-secret=hidden" });
         res.end(JSON.stringify({ type: "server-response", rpcId: body.rpcId, result: { ok: true, value } }));
@@ -258,6 +263,30 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     const alice = await login("alice"), bob = await login("bob"), admin = await login("admin");
     assert.equal((await (await request("/__teamhub/whoami", { headers: { cookie: alice } })).json()).role, "member");
     assert.equal((await (await request("/__teamhub/whoami", { headers: { cookie: admin } })).json()).role, "admin");
+    const workspaceCreatesBefore = seen.rpc.filter(method => method === "workspace/create").length;
+    const createdMemberResponse = await request("/__teamhub/api/users", { method: "POST", headers: { cookie: admin, "content-type": "application/json" }, body: JSON.stringify({ name: "charlie", role: "member" }) });
+    assert.equal(createdMemberResponse.status, 200);
+    const createdMember = await createdMemberResponse.json();
+    assert.equal(createdMember.user.name, "charlie");
+    assert.equal(createdMember.workspace.workspaceId, "created-charlie");
+    assert.equal(createdMember.workspace.title, "charlie");
+    assert.equal(fs.statSync(path.join(config.workspaceRoot, "charlie")).isDirectory(), true);
+    assert.equal(seen.rpc.filter(method => method === "workspace/create").length, workspaceCreatesBefore + 1);
+    const createdAdminResponse = await request("/__teamhub/api/users", { method: "POST", headers: { cookie: admin, "content-type": "application/json" }, body: JSON.stringify({ name: "operator", role: "admin" }) });
+    assert.equal(createdAdminResponse.status, 200);
+    const createdAdmin = await createdAdminResponse.json();
+    assert.equal(createdAdmin.user.role, "admin");
+    assert.equal(createdAdmin.workspace, null);
+    assert.equal(seen.rpc.filter(method => method === "workspace/create").length, workspaceCreatesBefore + 1);
+    seen.failWorkspaceFor = "brokenmember";
+    const failedMember = await request("/__teamhub/api/users", { method: "POST", headers: { cookie: admin, "content-type": "application/json" }, body: JSON.stringify({ name: "brokenmember", role: "member" }) });
+    assert.equal(failedMember.status, 409);
+    const failedBody = await failedMember.json();
+    assert.match(failedBody.error, /工作区未就绪/);
+    assert.equal(JSON.stringify(failedBody).includes("private upstream diagnostics"), false);
+    const usersAfterFailure = await (await request("/__teamhub/api/users", { headers: { cookie: admin } })).json();
+    assert.equal(usersAfterFailure.find(user => user.name === "brokenmember").status, "disabled");
+    seen.failWorkspaceFor = null;
     const normalizedAdminRoute = await request("/remote/api/skin-center/v2/active", { headers: { cookie: admin } });
     assert.equal(normalizedAdminRoute.status, 200);
     assert.deepEqual(await normalizedAdminRoute.json(), { path: "/api/skin-center/v2/active" });
