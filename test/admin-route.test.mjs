@@ -11,7 +11,7 @@ test("/admin 无尾斜杠时必须 302 到 /admin/（防相对路径解析错位
   assert.ok(html.includes('href="/admin/styles.css"'));
   assert.ok(html.includes('src="/admin/app.js"'));
   // 静态资源必须真实存在（serveAdminUi 会按 /admin/<file> 剥离前缀查找）
-  for (const file of ["styles.css", "app.js", "index.html"]) {
+  for (const file of ["styles.css", "app.js", "share-state.js", "index.html"]) {
     assert.ok(fs.existsSync(path.join(root, "admin-ui", file)), "missing asset: " + file);
   }
 });

@@ -22,3 +22,32 @@ form.inline { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .error { color: #b91c1c; }
 .success { color: #047857; }
+
+button:disabled { cursor: not-allowed; opacity: 0.45; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgb(17 24 39 / 55%); }
+.modal { width: min(760px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: white; border-radius: 14px; padding: 24px; box-shadow: 0 24px 60px rgb(0 0 0 / 25%); }
+.modal h2 { margin: 0 0 4px; }
+.modal-subtitle { margin: 0 0 6px; color: #4b5563; overflow-wrap: anywhere; }
+.modal-help { margin: 0 0 16px; color: #6b7280; font-size: 13px; }
+.dual-list { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.dual-list-column { display: flex; flex-direction: column; min-width: 0; }
+.dual-list-heading { margin: 0 0 8px; font-size: 13px; color: #374151; }
+.dual-list-heading .count { display: inline-block; min-width: 22px; margin-left: 4px; padding: 1px 7px; border-radius: 999px; background: #e5e7eb; color: #4b5563; text-align: center; font-size: 12px; }
+.listbox { flex: 1; min-height: 230px; max-height: 320px; overflow: auto; padding: 6px; border: 1px solid #d1d5db; border-radius: 10px; background: #f9fafb; }
+.listbox:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.list-option { display: block; width: 100%; margin: 0; padding: 8px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #1f2937; text-align: left; }
+.list-option:hover { background: #eef2ff; }
+.list-option.selected { border-color: #bfdbfe; background: #dbeafe; color: #1d4ed8; font-weight: 600; }
+.list-option:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
+.list-empty { margin: 10px; color: #9ca3af; font-size: 13px; text-align: center; }
+.move-buttons { display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+.move-buttons button { width: 44px; height: 38px; padding: 0; font-size: 18px; line-height: 1; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.modal-actions button { min-width: 88px; }
+@media (max-width: 680px) {
+  .modal-backdrop { padding: 12px; }
+  .modal { padding: 18px; }
+  .dual-list { grid-template-columns: minmax(0, 1fr); }
+  .move-buttons { flex-direction: row; justify-content: center; }
+  .listbox { min-height: 150px; max-height: 220px; }
+}

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Replace the free-text workspace sharing prompt with a two-column picker: granted members on the left, the remaining enabled members on the right, multi-select rows and arrow buttons to move them. The dialog identifies the project by title and path, excludes the owner, reports save failures in place, and keeps keyboard and screen-reader semantics for the dialog and both listboxes.
 - Add admin-managed per-workspace sharing grants for enabled members. Shared workspaces and their sessions appear alongside private workspaces, with authorized session history and live follow streams; grants persist in the private configuration and take effect after refresh or revocation. Shared access is read-only: owners alone can create sessions, send prompts, rename, approve or mutate workspaces. Enforce workspace/path/session binding and filter every member RPC or streamed response through current grants.
 
 - Restore existing-session history for DSH 0.2 journals containing `skill-catalog` and `user-approval` user-message sources. Skill catalog prompt text and entries are replaced with a member-safe placeholder; unknown plugin sources remain denied.

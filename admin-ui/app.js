@@ -1,3 +1,5 @@
+import { createShareState, moveShareMembers } from "./share-state.js";
+
 const app = document.querySelector("#app");
 const nav = [...document.querySelectorAll("nav a")];
 // 渲染后要恢复的提示消息：renderUsers 会重写 #app.innerHTML（清掉 #message），
@@ -23,6 +25,7 @@ function esc(value) {
 function badge(text, cls = "") { return `<span class="badge ${cls}">${esc(text)}</span>`; }
 
 async function render() {
+  closeShareDialogs();
   const page = location.hash.slice(1) || "overview";
   nav.forEach(a => a.classList.toggle("active", a.getAttribute("href") === "#" + page));
   try {
@@ -105,24 +108,205 @@ async function renderWorkspaces() {
     if (!button) return;
     const workspace = rows[Number(button.dataset.share)];
     if (!workspace) return;
-    const selected = new Set(workspace.members || []);
-    const choices = eligible.filter(user => user.name !== workspace.owner).map(user =>
-      `${user.name}（${user.displayName}）${selected.has(user.name) ? " ✓" : ""}`).join("\n");
-    const input = prompt(`设置「${workspace.title}」(${workspace.path}) 的共享成员。输入英文用户名，用逗号分隔；留空表示撤销全部共享。\n可选成员：\n${choices}`, [...selected].join(", "));
-    if (input === null) return;
-    const members = input.split(",").map(name => name.trim()).filter(Boolean);
-    if (!members.every(name => eligible.some(user => user.name === name && name !== workspace.owner)) ||
-        new Set(members).size !== members.length) {
-      document.querySelector("#workspace-message").textContent = "共享成员必须是列表中的不同普通成员";
-      return;
-    }
-    if (!confirm(`确定将 ${workspace.workspaceId} 的共享成员替换为：${members.join("、") || "无人"}？`)) return;
     try {
-      await api(`/workspaces/${encodeURIComponent(workspace.workspaceId)}/sharing`, { method: "POST", body: { members } });
+      const saved = await openShareDialog({
+        workspace,
+        users: eligible,
+        onSubmit: members => api(`/workspaces/${encodeURIComponent(workspace.workspaceId)}/sharing`, {
+          method: "POST", body: { members }
+        })
+      });
+      if (!saved || (location.hash.slice(1) || "overview") !== "workspaces") return;
       await renderWorkspaces();
       document.querySelector("#workspace-message").textContent = "共享成员已更新；已登录成员刷新页面即可看到变化";
-    } catch (error) { document.querySelector("#workspace-message").textContent = error.message; }
+    } catch (error) {
+      const message = document.querySelector("#workspace-message");
+      if (message) message.textContent = error.message;
+    }
   };
+}
+
+function closeShareDialogs() {
+  for (const node of document.querySelectorAll(".modal-backdrop")) {
+    if (typeof node.closeDialog === "function") node.closeDialog();
+    else node.remove();
+  }
+}
+
+function openShareDialog({ workspace, users, onSubmit }) {
+  closeShareDialogs();
+  let state = createShareState(users, workspace.owner, workspace.members || []);
+  const selected = { granted: new Set(), available: new Set() };
+  let busy = false;
+  let done = false;
+  const controller = new AbortController();
+  const trigger = document.activeElement;
+  let resolveResult;
+  const result = new Promise(resolve => { resolveResult = resolve; });
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" aria-describedby="share-dialog-help">
+      <h2 id="share-dialog-title">设置共享成员</h2>
+      <p class="modal-subtitle">${esc(workspace.title)} <span class="mono">${esc(workspace.path || workspace.workspaceId)}</span></p>
+      <p class="modal-help" id="share-dialog-help">点击成员姓名可多选，再用中间按钮调整是否授权。授权成员只能查看该工作区及其历史会话。</p>
+      <div class="dual-list">
+        <section class="dual-list-column" aria-labelledby="granted-heading">
+          <h3 class="dual-list-heading" id="granted-heading">已有权限 <span class="count" data-count="granted">0</span></h3>
+          <div class="listbox" data-list="granted" role="listbox" aria-multiselectable="true" aria-labelledby="granted-heading" tabindex="0"></div>
+        </section>
+        <div class="move-buttons">
+          <button type="button" class="secondary" data-move="revoke" aria-label="移除所选成员的权限" title="移除所选成员的权限" disabled>←</button>
+          <button type="button" class="secondary" data-move="grant" aria-label="授权所选成员" title="授权所选成员" disabled>→</button>
+        </div>
+        <section class="dual-list-column" aria-labelledby="available-heading">
+          <h3 class="dual-list-heading" id="available-heading">尚未授权 <span class="count" data-count="available">0</span></h3>
+          <div class="listbox" data-list="available" role="listbox" aria-multiselectable="true" aria-labelledby="available-heading" tabindex="0"></div>
+        </section>
+      </div>
+      <p class="error" id="share-dialog-error" role="alert" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="secondary" data-close>取消</button>
+        <button type="button" data-save>保存</button>
+      </div>
+    </section>`;
+  const dialog = backdrop.querySelector(".modal");
+  const listNodes = {
+    granted: backdrop.querySelector('[data-list="granted"]'),
+    available: backdrop.querySelector('[data-list="available"]')
+  };
+  const countNodes = {
+    granted: backdrop.querySelector('[data-count="granted"]'),
+    available: backdrop.querySelector('[data-count="available"]')
+  };
+  const moveNodes = {
+    grant: backdrop.querySelector('[data-move="grant"]'),
+    revoke: backdrop.querySelector('[data-move="revoke"]')
+  };
+  const saveNode = backdrop.querySelector("[data-save]");
+  const closeNode = backdrop.querySelector("[data-close]");
+  const errorNode = backdrop.querySelector("#share-dialog-error");
+
+  function renderLists() {
+    for (const side of ["granted", "available"]) {
+      const list = listNodes[side];
+      list.replaceChildren();
+      const names = state[side];
+      countNodes[side].textContent = String(names.length);
+      for (const name of names) {
+        const candidate = state.candidates.find(user => user.name === name);
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "list-option";
+        option.dataset.name = name;
+        option.dataset.side = side;
+        option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", String(selected[side].has(name)));
+        option.classList.toggle("selected", selected[side].has(name));
+        option.textContent = candidate?.displayName && candidate.displayName !== name
+          ? `${candidate.displayName}（${name}）` : name;
+        list.append(option);
+      }
+      if (!names.length) {
+        const empty = document.createElement("p");
+        empty.className = "list-empty";
+        empty.textContent = side === "granted" ? "还没有授权任何成员" : "所有成员都已有权限";
+        list.append(empty);
+      }
+    }
+    dialog.setAttribute("aria-busy", String(busy));
+    moveNodes.grant.disabled = busy || selected.available.size === 0;
+    moveNodes.revoke.disabled = busy || selected.granted.size === 0;
+    saveNode.disabled = busy;
+    closeNode.disabled = busy;
+    saveNode.textContent = busy ? "保存中…" : "保存";
+  }
+
+  function finish(value) {
+    if (done) return;
+    done = true;
+    controller.abort();
+    backdrop.remove();
+    if (trigger && trigger.isConnected) trigger.focus();
+    resolveResult(value);
+  }
+
+  // Navigation replaces the page while this dialog may still be awaiting a
+  // result; resolve it as cancelled instead of leaving the caller suspended.
+  backdrop.closeDialog = () => finish(false);
+
+  backdrop.addEventListener("click", async event => {
+    const option = event.target.closest(".list-option");
+    if (option) {
+      const side = option.dataset.side;
+      const name = option.dataset.name;
+      if (selected[side].has(name)) selected[side].delete(name);
+      else selected[side].add(name);
+      renderLists();
+      [...listNodes[side].children].find(node => node.dataset.name === name)?.focus();
+      return;
+    }
+    const move = event.target.closest("button[data-move]");
+    if (move) {
+      const direction = move.dataset.move;
+      const names = [...selected[direction === "grant" ? "available" : "granted"]];
+      const next = moveShareMembers(state, direction, names);
+      if (next !== state) {
+        state = next;
+        selected.granted.clear();
+        selected.available.clear();
+        renderLists();
+      }
+      return;
+    }
+    if (event.target.closest("[data-close]")) {
+      if (!busy) finish(false);
+      return;
+    }
+    if (event.target.closest("[data-save]")) {
+      if (busy) return;
+      busy = true;
+      errorNode.hidden = true;
+      renderLists();
+      try {
+        await onSubmit([...state.granted]);
+        finish(true);
+      } catch (cause) {
+        busy = false;
+        renderLists();
+        errorNode.textContent = cause?.message || "保存失败，请重试";
+        errorNode.hidden = false;
+      }
+      return;
+    }
+    if (event.target === backdrop) finish(false);
+  }, { signal: controller.signal });
+
+  backdrop.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (!busy) finish(false);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...dialog.querySelectorAll("button:not([disabled]), [tabindex='0']")]
+      .filter(node => node.getClientRects().length);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }, { signal: controller.signal });
+
+  document.body.append(backdrop);
+  renderLists();
+  listNodes[state.granted.length ? "granted" : "available"].focus();
+  return result;
 }
 
 function auditTable(rows) {
