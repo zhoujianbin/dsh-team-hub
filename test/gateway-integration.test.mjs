@@ -162,6 +162,11 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
         res.end(JSON.stringify({ type: "server-response", rpcId: body.rpcId, result: { ok: true, value } }));
         return;
       }
+      if (url.pathname === "/api/skin-center/v2/active") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ path: url.pathname }));
+        return;
+      }
       if (url.pathname === "/plugins/") {
         res.writeHead(200, { "content-type": "text/javascript" });
         res.end("/* isolated static client bundle */");
@@ -248,6 +253,9 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     const alice = await login("alice"), bob = await login("bob"), admin = await login("admin");
     assert.equal((await (await request("/__teamhub/whoami", { headers: { cookie: alice } })).json()).role, "member");
     assert.equal((await (await request("/__teamhub/whoami", { headers: { cookie: admin } })).json()).role, "admin");
+    const normalizedAdminRoute = await request("/remote/api/skin-center/v2/active", { headers: { cookie: admin } });
+    assert.equal(normalizedAdminRoute.status, 200);
+    assert.deepEqual(await normalizedAdminRoute.json(), { path: "/api/skin-center/v2/active" });
     const freshShell = await request("/?teamhub-login=1234567890123", { headers: { cookie: admin } });
     assert.equal(freshShell.status, 200);
     assert.equal(freshShell.headers.get("cache-control"), "no-store, no-cache, must-revalidate");
