@@ -162,8 +162,14 @@ async function refreshOwnership(context) {
     const workspaces = await workspaceBaseline(context.config);
     const sessions = await upstreamRpc(context.config, "session/list", { args: { _request: {} } });
     if (!Array.isArray(sessions?.items)) throw new Error("session/list returned invalid inventory");
-    for (const row of sessions.items) learnSession(context.config, context.ownership, row.sessionId, row.cwd, null);
-    for (const view of workspaces.items) learnWorkspace(context.config, context.ownership, view);
+    const current = createOwnership();
+    for (const row of sessions.items) learnSession(context.config, current, row.sessionId, row.cwd, null);
+    for (const view of workspaces.items) learnWorkspace(context.config, current, view);
+    context.ownership.workspaceOwner = current.workspaceOwner;
+    context.ownership.workspacePath = current.workspacePath;
+    context.ownership.workspaceTitle = current.workspaceTitle;
+    context.ownership.sessionOwner = current.sessionOwner;
+    context.ownership.sessionWorkspace = current.sessionWorkspace;
     return true;
   } catch (error) {
     context.audit.write("system.ownership-refresh-failed", { error: error.message });
@@ -292,7 +298,11 @@ async function handleApiPost(context, user, req, res, method) {
       if (method === "$events/result") {
         if (body.result.value !== undefined) return rpcError(res, rpcId, "internal", "invalid event acknowledgment", 502);
       } else {
-        try { body.result.value = filterMemberResponse({ ownership: context.ownership, user, method, value: body.result.value }); }
+        if (method !== "session/list" && method !== "session/search") {
+          const currentGuard = guardMemberRequest({ config: context.config, ownership: context.ownership, user, method, payload });
+          if (!currentGuard.ok) return rpcError(res, rpcId, "forbidden", "共享授权已撤销");
+        }
+        try { body.result.value = filterMemberResponse({ config: context.config, ownership: context.ownership, user, method, value: body.result.value }); }
         catch { return rpcError(res, rpcId, "internal", "invalid upstream RPC result", 502); }
       }
     } else {
@@ -318,7 +328,7 @@ async function handleApiPost(context, user, req, res, method) {
   }
 }
 
-async function handleAdminApi(context, req, res, pathname, query) {
+async function handleAdminApi(context, req, res, pathname, query, user) {
   const api = context.adminApi;
   if (req.method === "GET" && pathname === "/overview") return send(res, 200, api.overview());
   if (req.method === "GET" && pathname === "/users") return send(res, 200, api.users());
@@ -340,6 +350,20 @@ async function handleAdminApi(context, req, res, pathname, query) {
     return send(res, 200, api.setDisplayName(decodeURIComponent(nameMatch[1]), body.displayName));
   }
   if (req.method === "GET" && pathname === "/workspaces") return send(res, 200, api.workspaces());
+  const shareMatch = pathname.match(/^\/workspaces\/([^/]+)\/sharing$/);
+  if (req.method === "POST" && shareMatch) {
+    const body = JSON.parse((await collect(req)).toString("utf8") || "{}");
+    try {
+      const id = decodeURIComponent(shareMatch[1]);
+      if (!body || Array.isArray(body) || Object.keys(body).sort().join() !== "members")
+        return send(res, 400, { error: "仅接受共享成员列表" });
+      const live = await workspaceBaseline(context.config);
+      const matches = live.items.filter(view => view.workspaceId === id);
+      if (matches.length !== 1 || matches[0].path !== context.ownership.workspacePath.get(id))
+        return send(res, 409, { error: "上游工作区已变更，请刷新后重试" });
+      return send(res, 200, api.setWorkspaceShares(id, body.members, user.name));
+    } catch (error) { return send(res, 400, { error: error.message }); }
+  }
   if (req.method === "GET" && pathname === "/debug/ownership") return send(res, 200, api.ownershipDebug());
   if (req.method === "GET" && pathname === "/audit") return send(res, 200, api.audit({ limit: Number(query.get("limit") || 200), user: query.get("user"), type: query.get("type") }));
   if (req.method === "GET" && pathname === "/system") return send(res, 200, { upstream: context.config.upstream, users: context.config.users.length, node: process.version });
@@ -379,8 +403,9 @@ export async function startServer() {
     try {
       const mtime = fs.statSync(configFile).mtimeMs;
       if (mtime === configMtime) return;
+      const updated = loadConfig(home).config;
+      context.config = updated;
       configMtime = mtime;
-      context.config = loadConfig(home).config;
       context.browserAuth = new DshBrowserAuth(context.config);
       context.audit.write("system.config-reloaded", {});
       // 新增的成员需要就地建工作区，否则要等下次重启
@@ -393,7 +418,7 @@ export async function startServer() {
   context.adminApi = createAdminApi({
     home,
     getConfig: () => context.config,
-    save: next => { context.config = next; saveConfig(home, next); },
+    save: next => { saveConfig(home, next); context.config = next; },
     ownership: context.ownership,
     audit: context.audit,
     ensureUserWorkspace: user => ensureMemberWorkspace(context, user)
@@ -490,7 +515,10 @@ export async function startServer() {
       }
       if (url.pathname.startsWith("/__teamhub/api/")) {
         if (user.role !== "admin") return send(res, 403, { error: "admin only" });
-        return handleAdminApi(context, req, res, url.pathname.slice("/__teamhub/api".length), url.searchParams);
+        if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin &&
+            req.headers.origin !== `http://${req.headers.host}`)
+          return send(res, 403, { error: "cross-origin admin request denied" });
+        return handleAdminApi(context, req, res, url.pathname.slice("/__teamhub/api".length), url.searchParams, user);
       }
       if (user.role === "admin" && ["/api/pair/status", "/remote/api/pair/status"].includes(url.pathname) &&
           ["GET", "HEAD"].includes(req.method))
@@ -569,7 +597,7 @@ export async function startServer() {
           try {
             const frame = JSON.parse(data.toString("utf8"));
             const allowed = stream === "remote"
-              ? guardRemoteClientFrame({ ownership: context.ownership, user, streams: remoteStreams, frame })
+              ? guardRemoteClientFrame({ config: context.config, ownership: context.ownership, user, streams: remoteStreams, frame })
               : isAllowedClientFrame({ ownership: context.ownership, user, frame, answerable });
             if (!allowed) {
               context.audit.write("ws.client-frame-denied", { user: user.name, stream });

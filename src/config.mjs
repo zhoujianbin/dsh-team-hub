@@ -20,7 +20,8 @@ export function defaultConfig(home = defaultHome()) {
     dshWebLog: null,
     workspaceRoot: path.join(home, "workspaces"),
     sharedRoot: path.join(home, "shared"),
-    users: []
+    users: [],
+    workspaceShares: {}
   };
 }
 
@@ -56,11 +57,29 @@ export function validateConfig(config) {
     if (!["active", "disabled"].includes(user.status || "active")) throw new Error(`非法用户状态：${user.name}`);
   }
   if (!config.users.some(u => u.role === "admin" && (u.status || "active") === "active")) throw new Error("至少需要一个启用状态的 admin");
+  const shares = config.workspaceShares ?? {};
+  if (!shares || typeof shares !== "object" || Array.isArray(shares)) throw new Error("workspaceShares 必须是对象");
+  for (const [workspaceId, members] of Object.entries(shares)) {
+    if (!workspaceId || workspaceId.length > 256 ||
+        ["__proto__", "constructor", "prototype"].includes(workspaceId) ||
+        !Array.isArray(members) || members.length > config.users.length ||
+        members.some(name => typeof name !== "string" ||
+          !config.users.some(user => user.name === name && user.role === "member")) ||
+        new Set(members).size !== members.length)
+      throw new Error(`无效的工作区共享授权：${workspaceId}`);
+  }
   return true;
 }
 
 export function saveConfig(home, config) {
   validateConfig(config);
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(configPath(home), JSON.stringify(config, null, 2), { mode: 0o600 });
+  const target = configPath(home);
+  const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(config, null, 2), { mode: 0o600, flag: "wx" });
+    fs.renameSync(temporary, target);
+  } finally {
+    try { fs.unlinkSync(temporary); } catch {}
+  }
 }

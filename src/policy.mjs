@@ -34,7 +34,7 @@ export const MEMBER_GUARDED = new Set([
 ]);
 
 export function createOwnership() {
-  return { workspaceOwner: new Map(), sessionOwner: new Map() };
+  return { workspaceOwner: new Map(), sessionOwner: new Map(), sessionWorkspace: new Map(), workspacePath: new Map(), workspaceTitle: new Map() };
 }
 
 export function userRoot(config, user) {
@@ -85,8 +85,18 @@ export function learnWorkspace(config, ownership, view) {
     priorWorkspaceOwner === "ambiguous" ||
     (priorWorkspaceOwner && priorWorkspaceOwner !== owner && priorWorkspaceOwner !== "admin" && owner !== "admin")
       ? "ambiguous" : owner);
+  if (typeof view.path === "string") {
+    const previousPath = ownership.workspacePath.get(view.workspaceId);
+    if (previousPath && previousPath !== view.path && previousPath !== "ambiguous")
+      ownership.workspacePath.set(view.workspaceId, "ambiguous");
+    else if (!previousPath) ownership.workspacePath.set(view.workspaceId, view.path);
+  }
+  if (typeof view.title === "string") ownership.workspaceTitle.set(view.workspaceId, view.title);
   for (const sessionId of view.sessionIds || []) {
     if (typeof sessionId !== "string" || !sessionId) continue;
+    const priorWorkspace = ownership.sessionWorkspace.get(sessionId);
+    if (!priorWorkspace) ownership.sessionWorkspace.set(sessionId, view.workspaceId);
+    else if (priorWorkspace !== view.workspaceId) ownership.sessionWorkspace.set(sessionId, "ambiguous");
     const prior = ownership.sessionOwner.get(sessionId);
     if (prior === "ambiguous") continue;
     if (!prior || prior === "admin") {
@@ -105,6 +115,46 @@ export function learnSession(config, ownership, sessionId, cwd, fallbackOwner = 
   const prior = ownership.sessionOwner.get(sessionId);
   if (!prior || prior === "admin") ownership.sessionOwner.set(sessionId, owner);
   else if (owner !== "admin" && prior !== owner) ownership.sessionOwner.set(sessionId, "ambiguous");
+}
+
+export function canAccessWorkspace(config, ownership, user, id) {
+  const owner = ownership.workspaceOwner.get(id);
+  if (!owner || owner === "ambiguous") return false;
+  if (owner === user.name) return true;
+  const workspacePath = ownership.workspacePath.get(id);
+  if (typeof workspacePath !== "string" || workspacePath === "ambiguous" ||
+      (owner !== "admin" && ownerOfPath(config, workspacePath) !== owner) ||
+      (owner === "admin" && ownerOfPath(config, workspacePath))) return false;
+  if (user.role !== "member" || (user.status || "active") !== "active" ||
+      !config.users.some(account => account.name === user.name && account.role === "member" &&
+        (account.status || "active") === "active")) return false;
+  const grant = config.workspaceShares?.[id];
+  return Object.hasOwn(config.workspaceShares || {}, id) && Array.isArray(grant) && grant.includes(user.name);
+}
+
+export function canAccessSession(config, ownership, user, id) {
+  const owner = ownership.sessionOwner.get(id);
+  if (!owner || owner === "ambiguous") return false;
+  if (owner === user.name) return true;
+  const workspaceId = ownership.sessionWorkspace.get(id);
+  return typeof workspaceId === "string" && workspaceId !== "ambiguous" &&
+    ownership.workspaceOwner.get(workspaceId) === owner &&
+    canAccessWorkspace(config, ownership, user, workspaceId);
+}
+
+export function canAccessPath(config, ownership, user, candidate, workspaceId) {
+  if (workspaceId === undefined && ownerOfPath(config, candidate) === user.name) return true;
+  if (typeof candidate !== "string") return false;
+  let realPath;
+  try { realPath = fs.realpathSync(candidate); } catch { return false; }
+  return [...ownership.workspacePath.entries()].some(([id, workspacePath]) => {
+    if ((workspaceId !== undefined && id !== workspaceId) ||
+        !canAccessWorkspace(config, ownership, user, id) || workspacePath === "ambiguous") return false;
+    try {
+      const root = fs.realpathSync(workspacePath);
+      return realPath === root || realPath.startsWith(root + path.sep);
+    } catch { return false; }
+  });
 }
 
 export function ownedBy(ownership, user, kind, id) {
@@ -178,15 +228,19 @@ function record(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function guardedIds(ownership, user, object) {
+function guardedIds(config, ownership, user, object, readOnly = false) {
   for (const key of ["sessionId", "parentSessionId", "childSessionId", "beforeSessionId", "agentId"]) {
     if (Object.hasOwn(object, key)) {
-      if (typeof object[key] !== "string" || !object[key] || ownedBy(ownership, user, "session", object[key]) !== true) return false;
+      if (typeof object[key] !== "string" || !object[key] ||
+          !(readOnly ? canAccessSession(config, ownership, user, object[key]) :
+            ownedBy(ownership, user, "session", object[key]) === true)) return false;
     }
   }
   for (const key of ["workspaceId", "beforeWorkspaceId"]) {
     if (Object.hasOwn(object, key)) {
-      if (typeof object[key] !== "string" || !object[key] || ownedBy(ownership, user, "workspace", object[key]) !== true) return false;
+      if (typeof object[key] !== "string" || !object[key] ||
+          !(readOnly ? canAccessWorkspace(config, ownership, user, object[key]) :
+            ownedBy(ownership, user, "workspace", object[key]) === true)) return false;
     }
   }
   return true;
@@ -240,9 +294,12 @@ function guardRpcMemberRequest({ config, ownership, user, method, payload }) {
     method === "session/page" && scope.kind === "subagent" ? "parentSessionId" : "sessionId";
   if (typeof scope[required] !== "string")
     return { ok: false, message: "缺少会话或工作区归属参数" };
-  if (!guardedIds(ownership, user, args) || !guardedIds(ownership, user, args.request || {}) ||
-      !guardedIds(ownership, user, scope)) return { ok: false, message: "无权访问该会话或工作区" };
-  if (record(args.request?.address) && !guardedIds(ownership, user, args.request.address))
+  const readOnly = ["session/page", "session/projections", "skills/list", "messageFeedback/list", "commands/list"].includes(method);
+  if (!guardedIds(config, ownership, user, args, readOnly) ||
+      !guardedIds(config, ownership, user, args.request || {}, readOnly) ||
+      !guardedIds(config, ownership, user, scope, readOnly))
+    return { ok: false, message: "无权访问该会话或工作区" };
+  if (record(args.request?.address) && !guardedIds(config, ownership, user, args.request.address, readOnly))
     return { ok: false, message: "无权访问该会话" };
   if (method === "session/rename" && (Object.keys(args).length !== 1 ||
       Object.keys(args.request).sort().join() !== "sessionId,title" ||
@@ -300,7 +357,10 @@ function guardRpcMemberRequest({ config, ownership, user, method, payload }) {
         !(address.kind === "session" && Object.keys(address).sort().join() === "kind,sessionId" ||
           address.kind === "subagent" && Object.keys(address).sort().join() === "childSessionId,kind,mode,parentSessionId" &&
           ["one-shot", "continuable", "unknown"].includes(address.mode) &&
-          ownedBy(ownership, user, "session", address.childSessionId) === true) ||
+          (config ? canAccessSession(config, ownership, user, address.childSessionId) &&
+            canAccessSession(config, ownership, user, address.parentSessionId) &&
+            ownership.sessionWorkspace.get(address.childSessionId) === ownership.sessionWorkspace.get(address.parentSessionId) :
+            ownedBy(ownership, user, "session", address.childSessionId) === true)) ||
         Object.keys(args).length !== 1 || Object.keys(page).some(key => !["address", "throughSeq", "beforeSeq", "maxMessages", "turnWindow"].includes(key)) ||
         !Number.isSafeInteger(page.throughSeq) || page.throughSeq < 0 ||
         (page.beforeSeq !== undefined && (!Number.isSafeInteger(page.beforeSeq) || page.beforeSeq < 0)) ||
@@ -392,7 +452,7 @@ export function guardMemberRequest({ config, ownership, user, method, payload })
   return { ok: true, payload: p };
 }
 
-export function filterMemberResponse({ ownership, user, method, value }) {
+export function filterMemberResponse({ config, ownership, user, method, value }) {
   if (method === "permissionPresets/catalog") {
     if (!record(value) || !Array.isArray(value.options) || !Array.isArray(value.defaultOptions) ||
         typeof value.defaultPreset !== "string") throw new TypeError("invalid permission catalog");
@@ -530,9 +590,10 @@ export function filterMemberResponse({ ownership, user, method, value }) {
       throw new TypeError("invalid session page");
     const records = value.records.map(row => !record(row) || row.type !== "event" ||
       typeof row.event?.data?.childSessionId === "string" &&
-        ownedBy(ownership, user, "session", row.event.data.childSessionId) !== true
+        !(config ? canAccessSession(config, ownership, user, row.event.data.childSessionId) :
+          ownedBy(ownership, user, "session", row.event.data.childSessionId) === true)
         ? null : { type: "event", event: projectMemberJournalEvent(row.event, id =>
-          ownedBy(ownership, user, "session", id) === true) });
+          config ? canAccessSession(config, ownership, user, id) : ownedBy(ownership, user, "session", id) === true) });
     if (records.some(row => !row?.event) ||
         records.some((row, index) => index > 0 && row.event.seq !== records[index - 1].event.seq + 1))
       throw new TypeError("unauthorized session page");
@@ -555,7 +616,8 @@ export function filterMemberResponse({ ownership, user, method, value }) {
     for (const [key, original] of Object.entries(value.values)) {
       if (!MEMBER_PROJECTION_KEYS.has(key)) continue;
       const projected = projectMemberProjection({ key, value: original,
-        ownsSession: id => ownedBy(ownership, user, "session", id) === true });
+        ownsSession: id => config ? canAccessSession(config, ownership, user, id) :
+          ownedBy(ownership, user, "session", id) === true });
       if (projected !== undefined) values[key] = projected;
     }
     return { asOfSeq: value.asOfSeq, values };
@@ -566,8 +628,13 @@ export function filterMemberResponse({ ownership, user, method, value }) {
   if (method === "session/list" || method === "session/search") {
     if (!Array.isArray(value.items)) throw new TypeError(`${method} returned an invalid member-filterable result`);
     const items = value.items.filter(s =>
-      record(s) && ownership.sessionOwner.get(s.sessionId) === user.name &&
-      (!s.parentSessionId || ownership.sessionOwner.get(s.parentSessionId) === user.name)).map(s => {
+      record(s) && (config ? canAccessSession(config, ownership, user, s.sessionId) :
+        ownership.sessionOwner.get(s.sessionId) === user.name) &&
+      (!s.parentSessionId || (config ? canAccessSession(config, ownership, user, s.parentSessionId) :
+        ownership.sessionOwner.get(s.parentSessionId) === user.name)) &&
+      (!config || ownership.sessionOwner.get(s.sessionId) === user.name ||
+        (!s.parentSessionId || ownership.sessionWorkspace.get(s.parentSessionId) === ownership.sessionWorkspace.get(s.sessionId)) &&
+        (typeof s.cwd !== "string" || canAccessPath(config, ownership, user, s.cwd, ownership.sessionWorkspace.get(s.sessionId))))).map(s => {
       if (method === "session/search") return { sessionId: s.sessionId, ...(typeof s.snippet === "string" ? { snippet: s.snippet } : {}) };
       return { sessionId: s.sessionId,
         ...(typeof s.agentAvailable === "boolean" ? { agentAvailable: s.agentAvailable } : {}),
@@ -591,8 +658,10 @@ export function filterMemberResponse({ ownership, user, method, value }) {
   if (method === "workspace.list") {
     return {
       ...value,
-      items: (value.items || []).filter(w => ownership.workspaceOwner.get(w.workspaceId) === user.name),
-      archivedSessionIds: (value.archivedSessionIds || []).filter(id => ownership.sessionOwner.get(id) === user.name)
+      items: (value.items || []).filter(w => config ? canAccessWorkspace(config, ownership, user, w.workspaceId) :
+        ownership.workspaceOwner.get(w.workspaceId) === user.name),
+      archivedSessionIds: (value.archivedSessionIds || []).filter(id => config ? canAccessSession(config, ownership, user, id) :
+        ownership.sessionOwner.get(id) === user.name)
     };
   }
   if (method === "session.list" || method === "session.search") {

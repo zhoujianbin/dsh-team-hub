@@ -1,10 +1,12 @@
-import { ownedBy, learnWorkspace, ownerOfPath, userRoot } from "./policy.mjs";
+import { ownedBy, learnWorkspace, userRoot, canAccessWorkspace, canAccessSession, canAccessPath } from "./policy.mjs";
 import { MEMBER_PROJECTION_KEYS, projectMemberProjection } from "./session-projections.mjs";
 import { projectMemberJournalEvent } from "./session-journal.mjs";
 
 const record = v => v !== null && typeof v === "object" && !Array.isArray(v);
-const ownSession = (ownership, user, id) => typeof id === "string" && ownedBy(ownership, user, "session", id) === true;
-const ownWorkspace = (ownership, user, id) => typeof id === "string" && ownedBy(ownership, user, "workspace", id) === true;
+const ownSession = (ownership, user, id, config) => typeof id === "string" &&
+  (config ? canAccessSession(config, ownership, user, id) : ownedBy(ownership, user, "session", id) === true);
+const ownWorkspace = (ownership, user, id, config) => typeof id === "string" &&
+  (config ? canAccessWorkspace(config, ownership, user, id) : ownedBy(ownership, user, "workspace", id) === true);
 const exact = (value, keys) => record(value) && Object.keys(value).sort().join() === [...keys].sort().join();
 const nonempty = value => typeof value === "string" && value.length > 0 && value.length <= 128;
 
@@ -106,12 +108,12 @@ function projectAssistantFrame(value) {
   return null;
 }
 
-function projectBaseline(ownership, user, baseline) {
+function projectBaseline(ownership, user, baseline, config) {
   if (!record(baseline) || !sequence(baseline.asOfSeq) || !record(baseline.values)) return null;
   const values = {};
   for (const [key, value] of Object.entries(baseline.values)) {
     if (!MEMBER_PROJECTION_KEYS.has(key)) continue;
-    const projected = projectMemberProjection({ key, value, ownsSession: id => ownSession(ownership, user, id) });
+    const projected = projectMemberProjection({ key, value, ownsSession: id => ownSession(ownership, user, id, config) });
     if (projected !== undefined) values[key] = projected;
   }
   return { asOfSeq: baseline.asOfSeq, values };
@@ -201,22 +203,26 @@ export function settleMemberEventResult({ streams, frame, accepted }) {
     return;
   }
 }
-const memberWorkspace = (ownership, user, view) => ({
+const memberWorkspace = (ownership, user, view, config) => ({
   workspaceId: view.workspaceId, path: view.path, title: view.title,
-  sessionIds: view.sessionIds.filter(id => ownSession(ownership, user, id)),
+  sessionIds: view.sessionIds.filter(id => ownSession(ownership, user, id, config) &&
+    (!config || ownership.sessionWorkspace.get(id) === view.workspaceId)),
   createdAt: view.createdAt, updatedAt: view.updatedAt
 });
 
-function ownAddress(ownership, user, address) {
+function ownAddress(ownership, user, address, config) {
   if (!record(address)) return null;
-  if (address.kind === "session" && Object.keys(address).sort().join() === "kind,sessionId" && ownSession(ownership, user, address.sessionId)) return address.sessionId;
+  if (address.kind === "session" && Object.keys(address).sort().join() === "kind,sessionId" && ownSession(ownership, user, address.sessionId, config)) return address.sessionId;
   if (address.kind === "subagent" && Object.keys(address).sort().join() === "childSessionId,kind,mode,parentSessionId" &&
       ["one-shot", "continuable", "unknown"].includes(address.mode) &&
-      ownSession(ownership, user, address.parentSessionId) && ownSession(ownership, user, address.childSessionId)) return address.childSessionId;
+      ownSession(ownership, user, address.parentSessionId, config) &&
+      ownSession(ownership, user, address.childSessionId, config) &&
+      (!config || ownership.sessionWorkspace.get(address.parentSessionId) === ownership.sessionWorkspace.get(address.childSessionId)))
+    return address.childSessionId;
   return null;
 }
 
-export function guardRemoteClientFrame({ ownership, user, streams, frame }) {
+export function guardRemoteClientFrame({ config, ownership, user, streams, frame }) {
   if (!record(frame) || typeof frame.streamId !== "string" || !frame.streamId || frame.streamId.length > 128) return null;
   if (frame.type === "open") {
     if (streams.has(frame.streamId) || streams.size >= 32 || !record(frame.payload) || Object.keys(frame.payload).length !== 1 || !record(frame.payload.args)) return null;
@@ -228,7 +234,7 @@ export function guardRemoteClientFrame({ ownership, user, streams, frame }) {
     }
     if (frame.endpoint === "session/follow" && Object.keys(args).length === 1 && record(args.request)) {
       const request = args.request;
-      const id = ownAddress(ownership, user, request.address);
+      const id = ownAddress(ownership, user, request.address, config);
       if (!id || Object.keys(request).some(key => !["address", "assistantStream", "maxMessages", "turnWindow"].includes(key)) ||
           (request.assistantStream !== undefined && request.assistantStream !== true) ||
           (request.maxMessages !== undefined && (!Number.isInteger(request.maxMessages) || request.maxMessages < 1 || request.maxMessages > 500)) ||
@@ -290,10 +296,12 @@ export function filterRemoteServerFrame({ config, ownership, user, streams, fram
     if (value.type !== "emit" || !Array.isArray(value.args)) return null;
     const args = value.args;
     if (value.event === "api-session/added" && args.length === 1 && record(args[0]) &&
-        ownSession(ownership, user, args[0].sessionId) &&
-        (!args[0].parentSessionId || ownSession(ownership, user, args[0].parentSessionId))) {
+        ownSession(ownership, user, args[0].sessionId, config) &&
+        (!args[0].parentSessionId || ownSession(ownership, user, args[0].parentSessionId, config))) {
       const summary = args[0];
-      if (summary.cwd !== undefined && (typeof summary.cwd !== "string" || ownerOfPath(config, summary.cwd) !== user.name)) return null;
+      if (summary.cwd !== undefined && (typeof summary.cwd !== "string" ||
+          !canAccessPath(config, ownership, user, summary.cwd,
+            ownership.sessionOwner.get(summary.sessionId) === user.name ? undefined : ownership.sessionWorkspace.get(summary.sessionId)))) return null;
       if (typeof summary.updatedAt !== "number" || !Number.isFinite(summary.updatedAt)) return null;
       // SessionSummary is extensible upstream; project only the public list
       // fields we currently know, not arbitrary plugin-added metadata.
@@ -305,7 +313,7 @@ export function filterRemoteServerFrame({ config, ownership, user, streams, fram
       return { type: "item", streamId: frame.streamId, value: { type: "emit", event: value.event, args: [row] } };
     }
     if (["api-session/removed", "api-session/status", "api-session/activity"].includes(value.event) &&
-        ownSession(ownership, user, args[0]) &&
+        ownSession(ownership, user, args[0], config) &&
         ((value.event === "api-session/removed" && args.length === 1) ||
          (value.event === "api-session/status" && args.length === 2 && typeof args[1] === "boolean") ||
          (value.event === "api-session/activity" && args.length === 2 && Number.isFinite(args[1]))))
@@ -314,7 +322,7 @@ export function filterRemoteServerFrame({ config, ownership, user, streams, fram
     return null;
   }
   if (stream.endpoint === "session/follow") {
-    if (!ownSession(ownership, user, stream.id)) {
+    if (!ownSession(ownership, user, stream.id, config)) {
       streams.delete(frame.streamId);
       return { type: "error", streamId: frame.streamId, error: { code: "internal", message: "stream unavailable", details: {} } };
     }
@@ -332,16 +340,20 @@ export function filterRemoteServerFrame({ config, ownership, user, streams, fram
             (!Number.isSafeInteger(value.header.delegationDepth) || value.header.delegationDepth < 0)) ||
           (value.header.agentPreset !== undefined && typeof value.header.agentPreset !== "string") ||
           (stream.address.kind === "subagent" && value.header.parentSession !== stream.address.parentSessionId) ||
-          (value.header.parentSession && !ownSession(ownership, user, value.header.parentSession)) ||
-          (typeof value.header.cwd === "string" && value.header.cwd && ownerOfPath(config, value.header.cwd) !== user.name)) return null;
-      const projections = projectBaseline(ownership, user, value.projections);
+          (value.header.parentSession && (!ownSession(ownership, user, value.header.parentSession, config) ||
+            (ownership.sessionOwner.get(stream.id) !== user.name &&
+              ownership.sessionWorkspace.get(value.header.parentSession) !== ownership.sessionWorkspace.get(stream.id)))) ||
+          (typeof value.header.cwd === "string" && value.header.cwd &&
+            !canAccessPath(config, ownership, user, value.header.cwd,
+              ownership.sessionOwner.get(stream.id) === user.name ? undefined : ownership.sessionWorkspace.get(stream.id)))) return null;
+      const projections = projectBaseline(ownership, user, value.projections, config);
       if (value.projections !== undefined && (!projections || projections.asOfSeq > value.cursor)) return null;
       const assistantStream = value.assistantStream === undefined ? undefined : projectAssistantBaseline(value.assistantStream);
       if (value.assistantStream !== undefined && !assistantStream ||
           stream.assistantStream && !assistantStream) return null;
       const records = value.records.map(row => !record(row) || row.type !== "event" ||
-        typeof row.event?.data?.childSessionId === "string" && !ownSession(ownership, user, row.event.data.childSessionId)
-          ? null : { type: "event", event: projectMemberJournalEvent(row.event, id => ownSession(ownership, user, id)) });
+        typeof row.event?.data?.childSessionId === "string" && !ownSession(ownership, user, row.event.data.childSessionId, config)
+          ? null : { type: "event", event: projectMemberJournalEvent(row.event, id => ownSession(ownership, user, id, config)) });
       if (records.some(row => !row?.event) ||
           records.some((row, index) => index > 0 && row.event.seq !== records[index - 1].event.seq + 1) ||
           records.length && records.at(-1).event.seq > value.cursor) return null;
@@ -369,7 +381,7 @@ export function filterRemoteServerFrame({ config, ownership, user, streams, fram
       return { type: "error", streamId: frame.streamId, error: { code: "internal", message: "stream unavailable", details: {} } };
     }
     if (stream.opened && value.type === "event") {
-      const event = projectMemberJournalEvent(value.event, id => ownSession(ownership, user, id));
+      const event = projectMemberJournalEvent(value.event, id => ownSession(ownership, user, id, config));
       if (!event || value.event.seq !== stream.cursor + 1) {
         streams.delete(frame.streamId);
         return { type: "error", streamId: frame.streamId, error: { code: "internal", message: "stream unavailable", details: {} } };
@@ -392,17 +404,17 @@ export function filterRemoteServerFrame({ config, ownership, user, streams, fram
     if (value.type === "baseline" && record(value.value) && record(value.value.projections)) {
       const projections = {};
       for (const [id, baseline] of Object.entries(value.value.projections)) {
-        if (!ownSession(ownership, user, id)) continue;
-        const projected = projectBaseline(ownership, user, baseline);
+        if (!ownSession(ownership, user, id, config)) continue;
+        const projected = projectBaseline(ownership, user, baseline, config);
         if (!projected) return null;
         projections[id] = projected;
       }
       return { type: "item", streamId: frame.streamId, value: { type: "baseline", value: { projections } } };
     }
-    if (value.type === "projection" && ownSession(ownership, user, value.sessionId)) {
+    if (value.type === "projection" && ownSession(ownership, user, value.sessionId, config)) {
       if (!sequence(value.seq) || !MEMBER_PROJECTION_KEYS.has(value.key)) return null;
       const projected = projectMemberProjection({ key: value.key, value: value.value,
-        ownsSession: id => ownSession(ownership, user, id) });
+        ownsSession: id => ownSession(ownership, user, id, config) });
       if (projected === undefined) return null;
       return { type: "item", streamId: frame.streamId, value: { type: "projection", sessionId: value.sessionId, key: value.key, value: projected, seq: value.seq } };
     }
@@ -415,19 +427,19 @@ export function filterRemoteServerFrame({ config, ownership, user, streams, fram
     if (!baseline.items.every(item => record(item) && typeof item.workspaceId === "string" && typeof item.path === "string" && Array.isArray(item.sessionIds))) return null;
     for (const item of baseline.items) learnWorkspace(config, ownership, item);
     return { type: "item", streamId: frame.streamId, value: { type: "baseline", value: {
-      items: baseline.items.filter(w => ownWorkspace(ownership, user, w.workspaceId)).map(w => memberWorkspace(ownership, user, w)),
-      archivedSessionIds: baseline.archivedSessionIds.filter(id => ownSession(ownership, user, id)),
-      pinnedSessionIds: baseline.pinnedSessionIds.filter(id => ownSession(ownership, user, id))
+      items: baseline.items.filter(w => ownWorkspace(ownership, user, w.workspaceId, config)).map(w => memberWorkspace(ownership, user, w, config)),
+      archivedSessionIds: baseline.archivedSessionIds.filter(id => ownSession(ownership, user, id, config)),
+      pinnedSessionIds: baseline.pinnedSessionIds.filter(id => ownSession(ownership, user, id, config))
     } } };
   }
   if (value.type === "upsert" && record(value.workspace) && Array.isArray(value.workspace.sessionIds)) {
     learnWorkspace(config, ownership, value.workspace);
-    if (!ownWorkspace(ownership, user, value.workspace.workspaceId)) return null;
-    return { type: "item", streamId: frame.streamId, value: { type: "upsert", workspace: memberWorkspace(ownership, user, value.workspace) } };
+    if (!ownWorkspace(ownership, user, value.workspace.workspaceId, config)) return null;
+    return { type: "item", streamId: frame.streamId, value: { type: "upsert", workspace: memberWorkspace(ownership, user, value.workspace, config) } };
   }
-  if (value.type === "remove") return ownWorkspace(ownership, user, value.workspaceId) ? { type: "item", streamId: frame.streamId, value: { type: "remove", workspaceId: value.workspaceId } } : null;
-  if (value.type === "order" && Array.isArray(value.workspaceIds)) return { type: "item", streamId: frame.streamId, value: { type: "order", workspaceIds: value.workspaceIds.filter(id => ownWorkspace(ownership, user, id)) } };
-  if (value.type === "archived" && Array.isArray(value.archivedSessionIds)) return { type: "item", streamId: frame.streamId, value: { type: "archived", archivedSessionIds: value.archivedSessionIds.filter(id => ownSession(ownership, user, id)) } };
-  if (value.type === "pinned" && Array.isArray(value.pinnedSessionIds)) return { type: "item", streamId: frame.streamId, value: { type: "pinned", pinnedSessionIds: value.pinnedSessionIds.filter(id => ownSession(ownership, user, id)) } };
+  if (value.type === "remove") return ownWorkspace(ownership, user, value.workspaceId, config) ? { type: "item", streamId: frame.streamId, value: { type: "remove", workspaceId: value.workspaceId } } : null;
+  if (value.type === "order" && Array.isArray(value.workspaceIds)) return { type: "item", streamId: frame.streamId, value: { type: "order", workspaceIds: value.workspaceIds.filter(id => ownWorkspace(ownership, user, id, config)) } };
+  if (value.type === "archived" && Array.isArray(value.archivedSessionIds)) return { type: "item", streamId: frame.streamId, value: { type: "archived", archivedSessionIds: value.archivedSessionIds.filter(id => ownSession(ownership, user, id, config)) } };
+  if (value.type === "pinned" && Array.isArray(value.pinnedSessionIds)) return { type: "item", streamId: frame.streamId, value: { type: "pinned", pinnedSessionIds: value.pinnedSessionIds.filter(id => ownSession(ownership, user, id, config)) } };
   return null;
 }

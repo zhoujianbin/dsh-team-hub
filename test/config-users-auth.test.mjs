@@ -20,6 +20,20 @@ test("config validates and persists", () => {
   assert.equal(loaded.upstream, "http://127.0.0.1:3080");
 });
 
+test("workspace shares persist and reject invalid or duplicate principals", () => {
+  const home = tempHome();
+  const config = defaultConfig(home);
+  createUser(config, { name: "admin", role: "admin", password: "admin-pass-1" });
+  createUser(config, { name: "alice", role: "member", password: "alice-pass-1" });
+  config.workspaceShares["workspace-project"] = ["alice"];
+  saveConfig(home, config);
+  assert.deepEqual(loadConfig(home).config.workspaceShares["workspace-project"], ["alice"]);
+  assert.throws(() => saveConfig(home, { ...config, workspaceShares: { "workspace-project": ["admin"] } }));
+  assert.throws(() => saveConfig(home, { ...config, workspaceShares: { "workspace-project": ["alice", "alice"] } }));
+  assert.throws(() => saveConfig(home, { ...config, workspaceShares: { "workspace-project": ["unknown"] } }));
+  assert.deepEqual(loadConfig(home).config.workspaceShares["workspace-project"], ["alice"], "invalid saves do not replace valid grants");
+});
+
 test("loadConfig canonicalizes symlinked workspaceRoot/sharedRoot", () => {
   // dsh 上游用 fs.realpath 规范化工作区路径；loadConfig 必须同步规范化，
   // 否则符号链接路径（如 macOS /tmp→/private/tmp）下 member 归属匹配失效

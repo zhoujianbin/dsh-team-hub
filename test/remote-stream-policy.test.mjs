@@ -49,6 +49,27 @@ test("remote workspace frames never disclose other members or admin IDs", () => 
   assert.equal(ownership.workspaceOwner.get("wb"), "bob");
 });
 
+test("workspace follow includes granted workspace and excludes it after revocation", () => {
+  const { config, ownership, streams } = fixture();
+  const user = config.users[1];
+  const client = frame => guardRemoteClientFrame({ config, ownership, user, streams, frame });
+  const host = frame => filterRemoteServerFrame({ config, ownership, user, streams, frame });
+  const root = name => `${config.workspaceRoot}/${name}`;
+  const own = { workspaceId: "wa", path: root("alice"), title: "alice", sessionIds: ["sa"] };
+  const shared = { workspaceId: "wb", path: root("bob"), title: "bob", sessionIds: ["sb"] };
+  config.workspaceShares.wb = ["alice"];
+  assert.ok(client({ type: "open", streamId: "workspaces", endpoint: "workspace/follow", payload: { args: {} } }));
+  const baseline = host({ type: "item", streamId: "workspaces", value: { type: "baseline", value: { items: [own, shared], archivedSessionIds: [], pinnedSessionIds: [] } } });
+  assert.deepEqual(baseline.value.value.items.map(item => item.workspaceId), ["wa", "wb"]);
+  assert.deepEqual(baseline.value.value.items[1].sessionIds, ["sb"]);
+  const follow = { type: "open", streamId: "shared", endpoint: "session/follow", payload: { args: { request: { address: { kind: "session", sessionId: "sb" } } } } };
+  assert.deepEqual(client(follow), follow);
+  delete config.workspaceShares.wb;
+  assert.equal(client({ ...follow, streamId: "new" }), null);
+  assert.equal(host({ type: "item", streamId: "shared", value: { type: "event", event: {} } }).type, "error");
+  assert.deepEqual(host({ type: "item", streamId: "workspaces", value: { type: "order", workspaceIds: ["wa", "wb"] } }).value.workspaceIds, ["wa"]);
+});
+
 test("scoped session follow requires both subagent owners and validates snapshot identity", () => {
   const { ownership, client, host } = fixture();
   ownership.sessionOwner.set("sa", "alice");

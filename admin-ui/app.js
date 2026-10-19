@@ -92,10 +92,37 @@ async function renderUsers() {
 }
 
 async function renderWorkspaces() {
-  const rows = await api("/workspaces");
-  app.innerHTML = `<section class="card"><h2>工作区</h2><table><thead><tr><th>Workspace ID</th><th>Owner</th></tr></thead><tbody>
-  ${rows.map(w => `<tr><td class="mono">${esc(w.workspaceId)}</td><td>${esc(w.owner)}</td></tr>`).join("")}
-  </tbody></table></section>`;
+  const [rows, users] = await Promise.all([api("/workspaces"), api("/users")]);
+  const eligible = users.filter(user => user.role === "member" && user.status === "active");
+  app.innerHTML = `<section class="card"><h2>工作区共享</h2><p>授权成员可以查看共享工作区及历史会话。工作区所有者无需授权。</p>
+    <div id="workspace-message"></div><table><thead><tr><th>工作区 / 路径</th><th>所有者</th><th>共享给</th><th>操作</th></tr></thead><tbody>
+    ${rows.map((w, index) => `<tr><td>${esc(w.title)}<br><small class="mono">${esc(w.path || w.workspaceId)}</small></td><td>${esc(w.owner)}</td>
+      <td>${(w.members || []).map(esc).join("、") || "未共享"}</td>
+      <td><button data-share="${index}">设置共享成员</button></td></tr>`).join("")}
+    </tbody></table></section>`;
+  app.onclick = async event => {
+    const button = event.target.closest("button[data-share]");
+    if (!button) return;
+    const workspace = rows[Number(button.dataset.share)];
+    if (!workspace) return;
+    const selected = new Set(workspace.members || []);
+    const choices = eligible.filter(user => user.name !== workspace.owner).map(user =>
+      `${user.name}（${user.displayName}）${selected.has(user.name) ? " ✓" : ""}`).join("\n");
+    const input = prompt(`设置「${workspace.title}」(${workspace.path}) 的共享成员。输入英文用户名，用逗号分隔；留空表示撤销全部共享。\n可选成员：\n${choices}`, [...selected].join(", "));
+    if (input === null) return;
+    const members = input.split(",").map(name => name.trim()).filter(Boolean);
+    if (!members.every(name => eligible.some(user => user.name === name && name !== workspace.owner)) ||
+        new Set(members).size !== members.length) {
+      document.querySelector("#workspace-message").textContent = "共享成员必须是列表中的不同普通成员";
+      return;
+    }
+    if (!confirm(`确定将 ${workspace.workspaceId} 的共享成员替换为：${members.join("、") || "无人"}？`)) return;
+    try {
+      await api(`/workspaces/${encodeURIComponent(workspace.workspaceId)}/sharing`, { method: "POST", body: { members } });
+      await renderWorkspaces();
+      document.querySelector("#workspace-message").textContent = "共享成员已更新；已登录成员刷新页面即可看到变化";
+    } catch (error) { document.querySelector("#workspace-message").textContent = error.message; }
+  };
 }
 
 function auditTable(rows) {

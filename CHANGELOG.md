@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add admin-managed per-workspace sharing grants for enabled members. Shared workspaces and their sessions appear alongside private workspaces, with authorized session history and live follow streams; grants persist in the private configuration and take effect after refresh or revocation. Shared access is read-only: owners alone can create sessions, send prompts, rename, approve or mutate workspaces. Enforce workspace/path/session binding and filter every member RPC or streamed response through current grants.
+
 - Restore existing-session history for DSH 0.2 journals containing `skill-catalog` and `user-approval` user-message sources. Skill catalog prompt text and entries are replaced with a member-safe placeholder; unknown plugin sources remain denied.
 - Downgrade historical Host `danger-full-access` permission and sandbox journal entries to the member-visible `workspace-write` projection instead of dropping the entire gap-sensitive history snapshot. Add a real Chrome existing-session probe that requires a `session/follow` snapshot and can verify prompt acceptance.
 - Stop the member workspace auto-selector immediately after one expansion. DSH 0.2 uses a contenteditable composer, so the previous textarea-based completion test kept clicking the workspace once per second and toggled it open and closed.

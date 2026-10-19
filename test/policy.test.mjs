@@ -44,6 +44,35 @@ test("member cannot use another member session", () => {
   assert.equal(result.ok, false);
 });
 
+test("workspace sharing grants read access without transferring ownership or mutation rights", () => {
+  const { config, ownership, alice } = fixture();
+  config.workspaceShares.wb = ["alice"];
+  const read = (method, request) => guardMemberRequest({ config, ownership, user: alice, method, payload: { args: { request } } }).ok;
+  assert.equal(read("session/projections", { sessionId: "sb" }), true);
+  assert.equal(read("session/rename", { sessionId: "sb", title: "unsafe" }), false);
+  assert.equal(read("workspace/rename", { workspaceId: "wb", title: "unsafe" }), false);
+  assert.equal(read("session/prompt", { sessionId: "sb", mode: "default", content: [{ type: "text", text: "unsafe" }] }), false);
+  assert.equal(read("session/create", { workspaceId: "wb" }), false);
+  assert.equal(ownership.workspaceOwner.get("wb"), "bob");
+  assert.deepEqual(filterMemberResponse({ config, ownership, user: alice, method: "session/list",
+    value: { items: [{ sessionId: "sa" }, { sessionId: "sb" }] } }).items.map(row => row.sessionId), ["sa", "sb"]);
+  delete config.workspaceShares.wb;
+  assert.equal(read("session/projections", { sessionId: "sb" }), false);
+});
+
+test("share grants fail closed on changed owner path and cross-workspace session cwd", () => {
+  const { config, ownership, alice } = fixture();
+  config.workspaceShares.wb = ["alice"];
+  const list = cwd => filterMemberResponse({ config, ownership, user: alice, method: "session/list",
+    value: { items: [{ sessionId: "sb", cwd }] } }).items;
+  assert.deepEqual(list("/tmp/dsh-team-hub-test/workspaces/alice"), [], "shared session cannot borrow another granted path");
+  ownership.workspacePath.set("wb", "/tmp/dsh-team-hub-test/workspaces/alice");
+  assert.equal(guardMemberRequest({ config, ownership, user: alice, method: "session/projections",
+    payload: { args: { request: { sessionId: "sb" } } } }).ok, false);
+  ownership.workspacePath.delete("wb");
+  assert.deepEqual(list(undefined), []);
+});
+
 test("rename RPCs accept only their scoped ID and title", () => {
   const { config, ownership, alice } = fixture();
   const guard = (method, request, extra = {}) => guardMemberRequest({ config, ownership, user: alice, method,

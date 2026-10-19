@@ -160,6 +160,7 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
             type: "vendor/private", seq: 1, time: 2, data: { credential: "tenant-leak" }, ignorable: true } }],
             hasMore: false, hostSecret: "tenant-leak" }
           : body.method === "session/list" ? { items: sessions, total: 2, operatorHome: "/operator/private" }
+          : body.method === "session/projections" ? { asOfSeq: 0, values: {} }
           : body.method === "settings/describe" ? { writable: true, hasDocument: true, namespaces: [{ ns: "llm", schema: { apiKey: "tenant-leak" }, value: { apiKey: "tenant-leak" } }] }
           : body.method === "workspace/create" ? { workspace: { workspaceId: "created-" + path.basename(body.payload.args.request.path), title: path.basename(body.payload.args.request.path), path: body.payload.args.request.path, sessionIds: [] } }
           : { unknown: true };
@@ -206,7 +207,7 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
           } else if (frame.endpoint === "session/follow") {
             const id = frame.payload.args.request.address.sessionId;
             peer.send(JSON.stringify({ type: "item", streamId: frame.streamId, value: { type: "snapshot",
-              header: { id, version: 1, createdAt: 1, cwd: roots.alice, isSeeded: false, hostSecret: "tenant-leak" },
+              header: { id, version: 1, createdAt: 1, cwd: id === "session-bob" ? roots.bob : roots.alice, isSeeded: false, hostSecret: "tenant-leak" },
               cursor: 0, records: [], hasMore: false, assistantStream: { revision: 0 },
               projections: { asOfSeq: 0, values: { title: null,
                 modelSelection: { lastUsed: null, next: null, hostSecret: "tenant-leak" },
@@ -344,6 +345,27 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
         body: JSON.stringify({ type: "client-request", rpcId, method, payload }) });
       return { response, body: await response.json(), rpcId };
     };
+    const sharingRoute = "/__teamhub/api/workspaces/workspace-bob/sharing";
+    assert.equal((await request(sharingRoute, { method: "POST", headers: { cookie: alice, "content-type": "application/json" }, body: JSON.stringify({ members: ["alice"] }) })).status, 403);
+    const adminPost = (route, members, extra = {}) => request(route, { method: "POST",
+      headers: { cookie: admin, "content-type": "application/json", ...extra }, body: JSON.stringify({ members }) });
+    assert.equal((await adminPost(sharingRoute, ["bob"])).status, 400, "owner cannot be granted self access");
+    assert.equal((await adminPost(sharingRoute, ["missing"])).status, 400, "unknown member cannot be granted access");
+    assert.equal((await adminPost(sharingRoute, ["alice"], { origin: "https://example.invalid" })).status, 403);
+    assert.equal((await adminPost("/__teamhub/api/workspaces/nonexistent/sharing", ["alice"])).status, 409);
+    const grant = await adminPost(sharingRoute, ["alice"]);
+    assert.equal(grant.status, 200);
+    assert.deepEqual((await grant.json()).members, ["alice"]);
+    assert.equal((await rpc(alice, "session/list")).body.result.value.items.length, 2);
+    assert.equal((await rpc(alice, "session/projections", { args: { request: { sessionId: "session-bob" } } })).body.result.ok, true);
+    assert.equal((await rpc(alice, "session/prompt", { args: { request: { sessionId: "session-bob", requestId: "deny", mode: "queue", content: [{ type: "text", text: "deny" }] } } })).body.result.ok, false);
+    const sharingRows = await (await request("/__teamhub/api/workspaces", { headers: { cookie: admin } })).json();
+    assert.deepEqual(sharingRows.find(row => row.workspaceId === "workspace-bob").members, ["alice"]);
+    assert.equal(sharingRows.find(row => row.workspaceId === "workspace-bob").title, "bob");
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8")).workspaceShares["workspace-bob"], ["alice"]);
+    const revoke = await request(sharingRoute, { method: "POST", headers: { cookie: admin, "content-type": "application/json" }, body: JSON.stringify({ members: [] }) });
+    assert.equal(revoke.status, 200);
+    assert.deepEqual((await rpc(alice, "session/list")).body.result.value.items.map(item => item.sessionId), ["session-alice"]);
     for (const [cookie, own] of [[alice, "alice"], [bob, "bob"]]) {
       const { response, body } = await rpc(cookie, "session/list");
       assert.equal(response.status, 200);
@@ -414,6 +436,19 @@ test("gateway enforces HTTP and remote.mux member boundaries end to end", { time
     assert.deepEqual(baseline.value.value.items[0].sessionIds, ["session-alice"]);
     assert.deepEqual(baseline.value.value.archivedSessionIds, ["session-alice"]);
     assert.deepEqual(baseline.value.value.pinnedSessionIds, ["session-alice"]);
+    assert.equal((await adminPost(sharingRoute, ["alice"])).status, 200);
+    open("shared-work", "workspace/follow");
+    const sharedWork = await frames.next(frame => frame.streamId === "shared-work" && frame.value?.type === "baseline");
+    assert.deepEqual(sharedWork.value.value.items.map(item => item.workspaceId), ["workspace-alice", "workspace-bob"]);
+    open("shared-follow", "session/follow", { request: { address: { kind: "session", sessionId: "session-bob" } } });
+    const sharedFollow = await frames.next(frame => frame.streamId === "shared-follow" && frame.value?.type === "snapshot");
+    assert.equal(sharedFollow.value.header.cwd, roots.bob);
+    assert.equal(JSON.stringify(sharedFollow).includes("tenant-leak"), false);
+    assert.equal((await adminPost(sharingRoute, [])).status, 200);
+    const beforeRevokedOpen = seen.opens.length;
+    open("revoked-follow", "session/follow", { request: { address: { kind: "session", sessionId: "session-bob" } } });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(seen.opens.length, beforeRevokedOpen, "revoked follow must not reach DSH");
     const created = await rpc(alice, "session/create", { args: { request: {} } });
     assert.deepEqual(created.body.result.value, { sessionId: "session-created-alice" });
     assert.equal((await rpc(bob, "session/prompt", { args: { request: { sessionId: "session-created-alice",
