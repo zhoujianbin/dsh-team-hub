@@ -156,21 +156,24 @@ export function projectMemberJournalEvent(event, ownsSession) {
         return { type: "text", text: block.text };
       return null;
     });
-    if (content.some(block => !block) ||
-        (content.some(block => block.type === "tool-addition") &&
-          (!Number.isSafeInteger(data.headerSeq) || data.headerSeq < 0 || data.headerSeq >= event.seq))) return null;
-    if (data.headerSeq !== undefined &&
-        (!Number.isSafeInteger(data.headerSeq) || data.headerSeq < 0 || data.headerSeq >= event.seq)) return null;
+    if (content.some(block => !block)) return null;
     const source = data.message.source;
     if (!["user", "tool-registry"].includes(source.kind)) return null;
+    const projectedContent = source.kind === "tool-registry"
+      ? [{ type: "text", text: "[Host tool changes withheld by Team Hub]" }]
+      : content.map(block => block.type === "text"
+        ? { type: "text", text: "[Developer message withheld by Team Hub]" } : block);
+    // DSH's wire validator requires headerSeq exactly when the projected
+    // message contains tool additions; removal-only/tool-registry notices must
+    // omit it or the browser rejects the whole history snapshot.
+    const projectedAdditions = projectedContent.some(block => block.type === "tool-addition");
+    if (projectedAdditions &&
+        (!Number.isSafeInteger(data.headerSeq) || data.headerSeq < 0 || data.headerSeq >= event.seq)) return null;
     return { type: event.type, seq: event.seq, time: event.time, data: {
       turn: data.turn, step: data.step, message: { id: data.message.id, role: "developer",
-        content: source.kind === "tool-registry"
-          ? [{ type: "text", text: "[Host tool changes withheld by Team Hub]" }]
-          : content.map(block => block.type === "text"
-            ? { type: "text", text: "[Developer message withheld by Team Hub]" } : block),
+        content: projectedContent,
         source: { kind: source.kind } },
-      ...(data.headerSeq !== undefined ? { headerSeq: data.headerSeq } : {}) },
+      ...(projectedAdditions ? { headerSeq: data.headerSeq } : {}) },
       ...(event.ignorable === true ? { ignorable: true } : {}), ...surface };
   }
   if (event.type === "system/message") {

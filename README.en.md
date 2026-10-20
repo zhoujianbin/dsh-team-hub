@@ -10,7 +10,7 @@ dsh-team-hub sits between browsers and one local DSH instance. It adds login, ro
 
 > **dsh-team-hub is a team collaboration gateway for DSH.** Administrators manage members, workspaces, sharing grants, and audit records. Team members share one DSH service while keeping private workspaces and explicitly shared project workspaces.
 
-> **Version and compatibility: v0.3.0 adds shared-workspace collaboration and supports DSH 0.2.0 or newer (currently verified on DSH 0.2.x).** This is not OS-level multi-tenant isolation; agents still run under the same host account. See the security boundaries below.
+> **Version and compatibility: v0.3.1 (shared-workspace collaboration shipped in v0.3.0) supports DSH 0.2.0 or newer (currently verified on DSH 0.2.x).** This is not OS-level multi-tenant isolation; agents still run under the same host account. See the security boundaries below.
 
 ## Why
 
@@ -127,7 +127,7 @@ Read the full threat model in [docs/security.md](docs/security.md).
 ## Quick start
 
 ```bash
-npm install -g dsh-team-hub@0.3.0
+npm install -g dsh-team-hub@0.3.1
 
 dsh-team-hub init alice bob
 dsh-team-hub start
@@ -155,7 +155,7 @@ npm install -g dsh-team-hub@latest
 
 Restart the gateway service (for example the macOS launchd service or Linux systemd unit) and refresh the browser. Admin assets are served with `no-store`, so a normal refresh loads the new UI.
 
-Upgrading to v0.3.0 keeps existing members, workspaces, and sessions. New sharing grants start empty.
+Upgrading to v0.3.1 keeps existing members, workspaces, and sessions. New sharing grants start empty.
 
 ## CLI
 

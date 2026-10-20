@@ -1,6 +1,6 @@
 {
   "name": "dsh-team-hub",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Turn a single-user DeepSeek Harness instance into a secure team service with isolated and shared workspaces",
   "type": "module",
   "bin": {

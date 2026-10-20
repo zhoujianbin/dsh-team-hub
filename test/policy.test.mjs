@@ -792,6 +792,22 @@ test("member history pages reject foreign child catalog and strip Host metadata"
     value: { records: [registryChange], hasMore: false } }).records[0].event.data,
     { turn: 1, step: 1, message: { id: "dev", role: "developer", source: { kind: "tool-registry" },
       content: [{ type: "text", text: "[Host tool changes withheld by Team Hub]" }] } });
+  const removalWithHeader = { ...developer, event: { ...developer.event, data: {
+    ...developer.event.data, headerSeq: 1, message: { ...developer.event.data.message,
+      source: { kind: "user" },
+      content: [{ type: "tool-removal", toolName: "ssh_exec" }] } } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [removalWithHeader], hasMore: false } }).records[0].event.data,
+    { turn: 1, step: 1, message: { id: "dev", role: "developer", source: { kind: "user" },
+      content: [{ type: "tool-removal", toolName: "ssh_exec" }] } });
+  const registryAddition = { ...developer, event: { ...developer.event, data: {
+    ...developer.event.data, headerSeq: 1, message: { ...developer.event.data.message,
+      source: { kind: "tool-registry" },
+      content: [{ type: "tool-addition", toolName: "ssh_exec" }] } } } };
+  assert.deepEqual(filterMemberResponse({ ownership, user: alice, method: "session/page",
+    value: { records: [registryAddition], hasMore: false } }).records[0].event.data,
+    { turn: 1, step: 1, message: { id: "dev", role: "developer", source: { kind: "tool-registry" },
+      content: [{ type: "text", text: "[Host tool changes withheld by Team Hub]" }] } });
   const missingSurface = { ...good, event: { ...good.event, surfaceOp: undefined } };
   assert.throws(() => filterMemberResponse({ ownership, user: alice, method: "session/page",
     value: { records: [missingSurface], hasMore: false } }), /unauthorized/);

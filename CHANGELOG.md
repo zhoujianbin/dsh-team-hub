@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 (2026-10-19)
+
+- Fix shared session history failing with `session wire event requires headerSeq exactly when tool additions are present`. Developer messages that project tool removals, or whose tool-registry changes are replaced by a generic notice, now omit `headerSeq`; it is included only when the projected message still contains tool additions. This matches DSH's wire validator and keeps affected shared histories loadable.
+
 ## 0.3.0 (2026-10-19)
 
 - Support DSH 0.2.0 and newer. Add admin-managed shared workspaces so members can see their own and granted workspaces, load shared history, preview text files, and send queued text messages while owners retain approvals and workspace mutations.

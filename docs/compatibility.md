@@ -4,7 +4,7 @@ dsh-team-hub integrates with internal DSH HTTP RPC and WebSocket event protocols
 
 ## Verified workflow
 
-dsh-team-hub v0.3.0 supports DSH 0.2.0 and newer and is verified against DSH 0.2.x. Shared workspaces were verified through real Chrome for history loading, text-file preview, queued prompt submission, and immediate revocation.
+dsh-team-hub v0.3.1 supports DSH 0.2.0 and newer and is verified against DSH 0.2.x. Shared workspaces were verified through real Chrome for history loading, text-file preview, queued prompt submission, and immediate revocation.
 
 DSH 0.2.0-rc.2 is verified with isolated Chrome profiles for two members: login, preview acknowledgement, own-workspace sidebar, General settings, session creation, a submitted prompt and gap-free session history. Cross-member history access is denied. With a synthetic loopback Anthropic Messages provider and test-only key, both profiles receive the rendered `READY` assistant response through the real DSH Host. This does not validate production DeepSeek inference. Real-browser approval/question interactions remain unverified. The original v0.1 policy covered:
 
