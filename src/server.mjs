@@ -637,7 +637,22 @@ export async function startServer() {
                 ? filterMuxFrame({ ownership: context.ownership, user, frame, answerable, onUnknown: type => context.audit.write("ws.unknown-mux-frame", { type }) })
                 : filterHostFrame({ config: context.config, ownership: context.ownership, user, frame, onUnknown: type => context.audit.write("ws.unknown-host-frame", { type }) });
             if (!allowed) {
-              context.audit.write("ws.frame-dropped", { user: user.name, stream });
+              context.audit.write("ws.frame-dropped", { user: user.name, stream,
+                endpoint: remoteStreams.get(frame.streamId)?.endpoint,
+                frameType: frame?.type, valueType: frame?.value?.type,
+                eventType: frame?.value?.event?.type, projectionKey: frame?.value?.key,
+                sessionId: remoteStreams.get(frame.streamId)?.id,
+                snapshotSessionId: frame?.value?.header?.id });
+              // A rejected history snapshot is terminal: the member chat cannot
+              // open the Session and would spin on "载入历史…" forever. End the
+              // stream so the UI reports the failure instead of hanging.
+              if (stream === "remote" && frame.type === "item" && frame.value?.type === "snapshot" &&
+                  typeof frame.streamId === "string") {
+                remoteStreams.delete(frame.streamId);
+                if (downstream.readyState === WebSocket.OPEN)
+                  downstream.send(JSON.stringify({ type: "error", streamId: frame.streamId,
+                    error: { code: "internal", message: "stream unavailable", details: {} } }));
+              }
               return;
             }
           } catch (error) {

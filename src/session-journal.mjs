@@ -5,7 +5,7 @@ const record = value => value !== null && typeof value === "object" && !Array.is
 const FEEDBACK_CATEGORIES = new Set(["task-result", "instruction-following", "product-interaction",
   "service-stability", "resource-cost", "security-privacy-permission", "other"]);
 // Mirrors DSH 0.2 browser validator KNOWN_SESSION_EVENT_TYPES; update together on upgrade.
-const KNOWN_SESSION_EVENT_TYPES = new Set(["agent-preset/selected","agent/inbox/spliced","approval/asked","approval/decided","approval/policy","assistant/attempt","assistant/message","command/done","command/run","compaction/end","compaction/prune","compaction/start","compaction/summary","deliverables/presented","developer/message","feedback/message-delete","feedback/message-put","feedback/record","goal/change","hook/invoked","hook/result","image/offload","llm/retry","llm/retry-started","model/selection","permission/preset","plan/mode","request/context","request/header","sandbox/mode","schedule/change","session-log-deepseek/delivery-accepted","session/end-seed","session/title","session/title-llm-request","step/end","step/start","subagent/catalog","subagent/descriptor","subagent/model-selection-policy","system/message","team/member","team/message/delivered","team/message/queued","team/task","todo/write","tool-workflow/agent-end","tool-workflow/agent-start","tool-workflow/run-end","tool-workflow/run-start","tool/call","tool/ptc-dispatch","tool/ptc-dispatch-start","tool/result","turn/end","turn/start","user/message","web/deepseek-search-llm-request","workspace/changes"]);
+const KNOWN_SESSION_EVENT_TYPES = new Set(["agent-preset/selected","agent/inbox/spliced","approval/asked","approval/decided","approval/policy","assistant/attempt","assistant/message","command/done","command/run","compaction/end","compaction/prune","compaction/start","compaction/summary","deliverables/presented","developer/message","feedback/message-delete","feedback/message-put","feedback/record","goal/change","hook/invoked","hook/result","image/offload","job/registered","job/settled","llm/retry","llm/retry-started","model/selection","permission/preset","plan/mode","request/context","request/header","sandbox/mode","schedule/change","session-log-deepseek/delivery-accepted","session/end-seed","session/title","session/title-llm-request","step/end","step/start","subagent/catalog","subagent/descriptor","subagent/model-selection-policy","system/message","team/member","team/message/delivered","team/message/queued","team/task","todo/write","tool-workflow/agent-end","tool-workflow/agent-start","tool-workflow/run-end","tool-workflow/run-start","tool/call","tool/ptc-dispatch","tool/ptc-dispatch-start","tool/result","turn/end","turn/start","user/message","web/deepseek-search-llm-request","working-directory/change","workspace/changes"]);
 
 
 function projectAssistantContentBlock(block) {
@@ -327,11 +327,15 @@ export function projectMemberJournalEvent(event, ownsSession) {
   }
   if (event.type === "compaction/prune" || event.type === "compaction/summary") {
     const data = event.data, range = data?.shadowedRange;
+    // shadowedRange is a surface-POSITION span: after an earlier replacement a
+    // later summary can land at an older position, so start may exceed end.
+    // shadowedSeqs is the authoritative, possibly non-contiguous node set.
     if (!record(data) || !record(range) ||
-        !Number.isSafeInteger(range.start) || range.start < 0 ||
-        !Number.isSafeInteger(range.end) || range.end < range.start ||
-        range.end >= event.seq || !Array.isArray(data.shadowedSeqs) ||
-        !data.shadowedSeqs.every(seq => Number.isSafeInteger(seq) && seq >= range.start && seq <= range.end) ||
+        !Number.isSafeInteger(range.start) || range.start < 0 || range.start >= event.seq ||
+        !Number.isSafeInteger(range.end) || range.end < 0 || range.end >= event.seq ||
+        !Array.isArray(data.shadowedSeqs) ||
+        !data.shadowedSeqs.every(seq => Number.isSafeInteger(seq) && seq >= 0 && seq < event.seq) ||
+        new Set(data.shadowedSeqs).size !== data.shadowedSeqs.length ||
         !Number.isSafeInteger(data.shadowedTokenCount) || data.shadowedTokenCount < 0) return null;
     const safe = { shadowedRange: { start: range.start, end: range.end },
       shadowedSeqs: [...data.shadowedSeqs], shadowedTokenCount: data.shadowedTokenCount };
@@ -385,7 +389,9 @@ export function projectMemberJournalEvent(event, ownsSession) {
     if (event.type === "tool/ptc-dispatch") {
       if (typeof data.isError !== "boolean" || !Array.isArray(data.content)) return null;
       const content = data.content.map(block => record(block) && block.type === "text" &&
-        typeof block.text === "string" ? { type: "text", text: block.text } : null);
+        typeof block.text === "string" ? { type: "text", text: block.text } :
+        record(block) && block.type === "image" ? { type: "text", text: "[Image withheld by Team Hub]" } :
+        record(block) && block.type === "file" ? { type: "text", text: "[File withheld by Team Hub]" } : null);
       if (content.some(block => !block)) return null;
       Object.assign(safe, { isError: data.isError, content });
       if (data.error !== undefined) {
@@ -432,6 +438,39 @@ export function projectMemberJournalEvent(event, ownsSession) {
     return { type: event.type, seq: event.seq, time: event.time, data: {
       targets: data.targets.map(target => ({ seq: target.seq,
         imageIndexes: [...target.imageIndexes] })) } };
+  }
+  if (event.type === "job/registered" || event.type === "job/settled") {
+    const data = event.data;
+    if (!record(data) || typeof data.jobId !== "string" || !data.jobId ||
+        typeof data.owner !== "string" || !ownsSession(data.owner) ||
+        typeof data.kind !== "string" || !data.kind ||
+        typeof data.label !== "string" ||
+        !Number.isSafeInteger(data.startedAt) ||
+        (data.toolCall !== undefined && (!record(data.toolCall) ||
+          typeof data.toolCall.callId !== "string" ||
+          typeof data.toolCall.rootCallId !== "string"))) return null;
+    // Journal job records are log-only; the browser renders the live registry
+    // instead. Keep the lifecycle identity, but withhold the producer label and
+    // spawning call, which may name Host paths or credentials.
+    const safe = { jobId: data.jobId, owner: data.owner, kind: data.kind,
+      label: "[Job label withheld by Team Hub]", startedAt: data.startedAt };
+    if (event.type === "job/settled") {
+      if (!Number.isSafeInteger(data.finishedAt) ||
+          !["completed", "killed", "failed"].includes(data.status) ||
+          !["producer", "kill", "teardown"].includes(data.cause) ||
+          typeof data.producerReported !== "boolean" ||
+          (data.detail !== undefined && typeof data.detail !== "string")) return null;
+      Object.assign(safe, { finishedAt: data.finishedAt, status: data.status,
+        cause: data.cause, producerReported: data.producerReported });
+    }
+    return { type: event.type, seq: event.seq, time: event.time, data: safe };
+  }
+  if (event.type === "working-directory/change") {
+    if (!record(event.data) || typeof event.data.cwd !== "string" || !event.data.cwd) return null;
+    // The effective directory can leave every member-visible workspace and
+    // name an operator path. The event is log-only for the browser (the Session
+    // header carries the visible workspace root), so withhold it entirely.
+    return { type: "teamhub/redacted-event", seq: event.seq, time: event.time, data: {}, ignorable: true };
   }
   if (event.type === "subagent/model-selection-policy") {
     const data = event.data;
@@ -559,6 +598,28 @@ export function projectMemberJournalEvent(event, ownsSession) {
       target: data.target, start: data.start, inserted,
       ...(data.removedCount !== undefined ? { removedCount: data.removedCount } : {}),
       ...(data.outcome !== undefined ? { outcome: data.outcome } : {}) } };
+  }
+  if (event.type === "deliverables/presented") {
+    const data = event.data;
+    if (!record(data) || !Number.isSafeInteger(data.turn) || data.turn < 1 ||
+        typeof data.callId !== "string" || !data.callId ||
+        !Array.isArray(data.files) || data.files.length > 100) return null;
+    const files = data.files.map(file => {
+      if (!record(file) || typeof file.path !== "string" || !file.path ||
+          file.path.length > 1024 || file.path.includes("\0") ||
+          (file.description !== undefined && typeof file.description !== "string")) return null;
+      // Absolute or parent-traversing paths can name operator files outside
+      // every member-visible workspace; show only the trailing name.
+      const parts = file.path.split(/[\\/]+/);
+      const safePath = /^(?:[A-Za-z]:)?[\\/]/.test(file.path) || parts.includes("..") || file.path === "."
+        ? parts.filter(part => part && part !== "." && part !== "..").pop() || "file"
+        : file.path;
+      return { path: safePath,
+        ...(file.description !== undefined ? { description: file.description } : {}) };
+    });
+    if (files.some(file => !file)) return null;
+    return { type: event.type, seq: event.seq, time: event.time,
+      data: { turn: data.turn, callId: data.callId, files } };
   }
   if (event.type === "workspace/changes") {
     if (!record(event.data) || !Number.isSafeInteger(event.data.turn) || event.data.turn < 0) return null;

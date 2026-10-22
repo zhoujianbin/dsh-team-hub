@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2 (2026-10-22)
+
+- Fix shared-session history stuck on `载入历史…` for ordinary DSH 0.2.1 journals. The member projection now covers every DSH 0.2.1 event type and user-message source that appears in normal agent work: `job/registered`, `job/settled` (labels, spawning calls and terminal details withheld), `working-directory/change` (withheld; can name operator paths), `time-context`, `working-directory`, PTC deferred-image `ptc-mode` messages and inbox splices, `skill-invocation` and `tool-goal` notices (prompt text replaced with placeholders), `compact-checkpoint` (correlated by compaction ID), image/file blocks inside `tool/ptc-dispatch` results (replaced with placeholders), `deliverables/presented` (absolute or parent-traversing paths reduced to the trailing name), and compaction summaries whose `shadowedRange` is a surface-position span (`start` may exceed `end`) with an authoritative non-contiguous `shadowedSeqs` set. A single unprojected entry previously failed the whole snapshot closed and left the chat loading forever.
+- A rejected history snapshot now terminates the member stream with a sanitized `stream unavailable` error instead of being dropped silently, so the chat reports 历史加载失败 rather than hanging. `ws.frame-dropped` audit rows now carry protocol-only diagnostics (endpoint, frame/item/event type, projection key, session ID) to make future compatibility gaps diagnosable without recording payloads.
+
 ## 0.3.1 (2026-10-19)
 
 - Fix shared session history failing with `session wire event requires headerSeq exactly when tool additions are present`. Developer messages that project tool removals, or whose tool-registry changes are replaced by a generic notice, now omit `headerSeq`; it is included only when the projected message still contains tool additions. This matches DSH's wire validator and keeps affected shared histories loadable.

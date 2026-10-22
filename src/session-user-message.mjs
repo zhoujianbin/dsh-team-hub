@@ -25,6 +25,30 @@ export function projectUserMessage(data, ownsSession) {
     Array.isArray(source.sections) && source.sections.every(section => record(section) &&
       typeof section.name === "string" && typeof section.text === "string"))
     projectedSource = { kind: "runtime-context", form: "snapshot", sections: [] };
+  else if (source.kind === "time-context" && source.form === "snapshot" &&
+    Array.isArray(source.sections) && source.sections.every(section => record(section) &&
+      typeof section.name === "string" && typeof section.text === "string"))
+    // DSH 0.2.1's clock reading is generated text (timestamp, browser zone and
+    // elapsed time); it carries no Host material beyond the Session's own time.
+    projectedSource = { kind: "time-context", form: "snapshot",
+      sections: source.sections.map(section => ({ name: section.name, text: section.text })) };
+  else if (source.kind === "ptc-mode" && Object.keys(source).length === 1)
+    // Deferred images from a successful PTC subcall; the image blocks become
+    // placeholders below, and the source carries no further fields.
+    projectedSource = { kind: "ptc-mode" };
+  else if (source.kind === "skill-invocation" && source.form === "instructions" &&
+    typeof source.name === "string" && source.name)
+    projectedSource = { kind: "skill-invocation", name: source.name, form: "instructions" };
+  else if (source.kind === "compact-checkpoint" && typeof source.compactionId === "string" &&
+    (source.sourceCommandId === undefined || typeof source.sourceCommandId === "string"))
+    projectedSource = { kind: "compact-checkpoint", compactionId: source.compactionId,
+      ...(source.sourceCommandId !== undefined ? { sourceCommandId: source.sourceCommandId } : {}) };
+  else if (source.kind === "tool-goal" && source.form === "notice" && typeof source.summary === "string")
+    projectedSource = { kind: "tool-goal", form: "notice", summary: "Goal notice" };
+  else if (source.kind === "working-directory" && Object.keys(source).length === 1)
+    // Transition notices name the previous and next directories, which can be
+    // operator paths outside every shared workspace.
+    projectedSource = { kind: "working-directory" };
   else if (source.kind === "agent-message" && source.form === "relay" &&
       typeof source.senderSessionId === "string" && ownsSession(source.senderSessionId))
     projectedSource = { kind: "agent-message", form: "relay", senderSessionId: source.senderSessionId };
@@ -88,6 +112,9 @@ export function projectUserMessage(data, ownsSession) {
     content: projectedSource.kind === "runtime-context" ? [{ type: "text", text: "[Runtime context withheld by Team Hub]" }] :
       projectedSource.kind === "skill-catalog" ? [{ type: "text", text: "[Skill catalog withheld by Team Hub]" }] :
       projectedSource.kind === "agent-instructions" ? [{ type: "text", text: "[Agent instructions withheld by Team Hub]" }] :
-      projectedSource.kind === "tool-jobs" ? [{ type: "text", text: "[Tool job notice withheld by Team Hub]" }] : content,
+      projectedSource.kind === "tool-jobs" ? [{ type: "text", text: "[Tool job notice withheld by Team Hub]" }] :
+      projectedSource.kind === "working-directory" ? [{ type: "text", text: "[Working directory notice withheld by Team Hub]" }] :
+      projectedSource.kind === "skill-invocation" ? [{ type: "text", text: "[Skill invocation withheld by Team Hub]" }] :
+      projectedSource.kind === "tool-goal" ? [{ type: "text", text: "[Goal notice withheld by Team Hub]" }] : content,
     source: projectedSource };
 }

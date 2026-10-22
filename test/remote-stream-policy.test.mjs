@@ -264,6 +264,107 @@ test("scoped session follow requires both subagent owners and validates snapshot
   assert.equal(host({ type: "item", streamId: "revoked", value: { type: "event", event: { secret: true } } }), null);
 });
 
+test("DSH 0.2.1 job, time-context and working-directory history is projectable", () => {
+  const { ownership, client, host } = fixture();
+  ownership.sessionOwner.set("sa", "alice");
+  assert.deepEqual(client({ type: "open", streamId: "jobs", endpoint: "session/follow",
+    payload: { args: { request: { address: { kind: "session", sessionId: "sa" } } } } }).endpoint, "session/follow");
+  const timeContext = { type: "user/message", seq: 1, time: 1, surfaceOp: "append", data: {
+    id: "u1", role: "user", content: [{ type: "text", text: "Time sampled while preparing turn 1, step 1" }],
+    source: { kind: "time-context", form: "snapshot",
+      sections: [{ name: "time-context", text: "Time sampled while preparing turn 1, step 1", secret: "hidden" }],
+      hostSecret: "hidden" } } };
+  const registered = { type: "job/registered", seq: 2, time: 2, data: { jobId: "job-1", owner: "sa",
+    kind: "bash", label: "rm -rf /operator/secret", startedAt: 2,
+    toolCall: { callId: "call-1", rootCallId: "call-1" }, hostSecret: "hidden" } };
+  const settled = { type: "job/settled", seq: 3, time: 3, data: { jobId: "job-1", owner: "sa",
+    kind: "bash", label: "rm -rf /operator/secret", startedAt: 2, finishedAt: 3,
+    status: "completed", cause: "producer", producerReported: true,
+    detail: "/operator/secret", toolCall: { callId: "call-1", rootCallId: "call-1" } } };
+  const directory = { type: "working-directory/change", seq: 4, time: 4, data: { cwd: "/operator/secret" } };
+  const notice = { type: "user/message", seq: 5, time: 5, surfaceOp: "append", data: {
+    id: "u2", role: "user", content: [{ type: "text", text: "The working directory changed to /operator/secret" }],
+    source: { kind: "working-directory" } } };
+  const snapshot = host({ type: "item", streamId: "jobs", value: { type: "snapshot",
+    header: { id: "sa", version: 4, createdAt: 2, isSeeded: false }, cursor: 5, hasMore: false,
+    records: [timeContext, registered, settled, directory, notice].map(event => ({ type: "event", event })) } });
+  assert.ok(snapshot, "a session containing new DSH 0.2.1 events must not lose its whole history");
+  assert.deepEqual(snapshot.value.records[0].event.data.source,
+    { kind: "time-context", form: "snapshot",
+      sections: [{ name: "time-context", text: "Time sampled while preparing turn 1, step 1" }] });
+  assert.deepEqual(snapshot.value.records[1].event.data,
+    { jobId: "job-1", owner: "sa", kind: "bash",
+      label: "[Job label withheld by Team Hub]", startedAt: 2 });
+  assert.deepEqual(snapshot.value.records[2].event.data,
+    { jobId: "job-1", owner: "sa", kind: "bash",
+      label: "[Job label withheld by Team Hub]", startedAt: 2, finishedAt: 3,
+      status: "completed", cause: "producer", producerReported: true });
+  assert.deepEqual(snapshot.value.records[3].event,
+    { type: "teamhub/redacted-event", seq: 4, time: 4, data: {}, ignorable: true });
+  assert.deepEqual(snapshot.value.records[4].event.data.content,
+    [{ type: "text", text: "[Working directory notice withheld by Team Hub]" }]);
+  assert.equal(JSON.stringify(snapshot).includes("operator"), false);
+  assert.equal(JSON.stringify(snapshot).includes("hidden"), false);
+  assert.deepEqual(client({ type: "open", streamId: "foreign-job", endpoint: "session/follow",
+    payload: { args: { request: { address: { kind: "session", sessionId: "sa" } } } } }).endpoint, "session/follow");
+  assert.equal(host({ type: "item", streamId: "foreign-job", value: { type: "snapshot",
+    header: { id: "sa", version: 4, createdAt: 2, isSeeded: false }, cursor: 2, hasMore: false,
+    records: [{ type: "event", event: { ...registered, data: { ...registered.data, owner: "sb" } } },
+      { type: "event", event: { ...settled, seq: 2, data: { ...settled.data, owner: "sb" } } }] } }), null);
+});
+
+test("DSH 0.2.1 PTC, skill, checkpoint, goal and deliverable history is projectable", () => {
+  const { ownership, client, host } = fixture();
+  ownership.sessionOwner.set("sa", "alice");
+  assert.deepEqual(client({ type: "open", streamId: "ptc", endpoint: "session/follow",
+    payload: { args: { request: { address: { kind: "session", sessionId: "sa" } } } } }).endpoint, "session/follow");
+  const image = { type: "image", attachment: { attachmentId: "sha256:secret", mediaType: "image/png", bytes: 1 } };
+  const ptc = { type: "user/message", seq: 1, time: 1, surfaceOp: "append", data: { id: "u1", role: "user",
+    content: [{ type: "text", text: "screenshot" }, image], source: { kind: "ptc-mode" } } };
+  const spliced = { type: "agent/inbox/spliced", seq: 2, time: 2, data: { target: "next-step", start: 0,
+    inserted: [{ id: "u1", role: "user", content: [{ type: "text", text: "screenshot" }, image],
+      source: { kind: "ptc-mode" } }] } };
+  const dispatch = { type: "tool/ptc-dispatch", seq: 3, time: 3, data: { rootCallId: "r", parentCallId: "p",
+    subCallId: "s", name: "read_image", arguments: { file_path: "/operator/secret.png" }, isError: false,
+    content: [{ type: "text", text: "ok" }, image] } };
+  const skill = { type: "user/message", seq: 4, time: 4, surfaceOp: "append", data: { id: "u2", role: "user",
+    content: [{ type: "text", text: "<skill_content>.../operator/secret..." }],
+    source: { kind: "skill-invocation", name: "openspec", form: "instructions" } } };
+  const checkpoint = { type: "user/message", seq: 5, time: 5, surfaceOp: "append", data: { id: "u3", role: "user",
+    content: [{ type: "text", text: "condensed earlier span" }],
+    source: { kind: "compact-checkpoint", compactionId: "c1" } } };
+  const goal = { type: "user/message", seq: 6, time: 6, surfaceOp: "append", data: { id: "u4", role: "user",
+    content: [{ type: "text", text: "<goal_complete>secret</goal_complete>" }],
+    source: { kind: "tool-goal", form: "notice", summary: "complete: secret" } } };
+  const presented = { type: "deliverables/presented", seq: 7, time: 7, data: { turn: 6, callId: "call-1", files: [
+    { path: "docs/a.md", description: "relative" },
+    { path: "/operator/secret.docx", description: "absolute" }] } };
+  const summary = { type: "compaction/summary", seq: 8, time: 8, data: { compactionId: "c1",
+    summary: [{ type: "text", text: "condensed" }], shadowedRange: { start: 6, end: 2 },
+    shadowedSeqs: [2, 5, 6], shadowedTokenCount: 10, provider: "p", model: "m", rawOutput: [{ type: "text", text: "raw" }] } };
+  const snapshot = host({ type: "item", streamId: "ptc", value: { type: "snapshot",
+    header: { id: "sa", version: 4, createdAt: 2, isSeeded: false }, cursor: 8, hasMore: false,
+    records: [ptc, spliced, dispatch, skill, checkpoint, goal, presented, summary].map(event => ({ type: "event", event })) } });
+  assert.ok(snapshot, "PTC image and compaction history must not lose the whole snapshot");
+  assert.deepEqual(snapshot.value.records[0].event.data.content,
+    [{ type: "text", text: "screenshot" }, { type: "text", text: "[Image withheld by Team Hub]" }]);
+  assert.deepEqual(snapshot.value.records[1].event.data.inserted[0].content,
+    [{ type: "text", text: "screenshot" }, { type: "text", text: "[Image withheld by Team Hub]" }]);
+  assert.deepEqual(snapshot.value.records[2].event.data.content,
+    [{ type: "text", text: "ok" }, { type: "text", text: "[Image withheld by Team Hub]" }]);
+  assert.deepEqual(snapshot.value.records[2].event.data.arguments, {});
+  assert.deepEqual(snapshot.value.records[3].event.data.content,
+    [{ type: "text", text: "[Skill invocation withheld by Team Hub]" }]);
+  assert.deepEqual(snapshot.value.records[4].event.data.source, { kind: "compact-checkpoint", compactionId: "c1" });
+  assert.deepEqual(snapshot.value.records[5].event.data.content,
+    [{ type: "text", text: "[Goal notice withheld by Team Hub]" }]);
+  assert.deepEqual(snapshot.value.records[6].event.data.files,
+    [{ path: "docs/a.md", description: "relative" }, { path: "secret.docx", description: "absolute" }]);
+  assert.deepEqual(snapshot.value.records[7].event.data.shadowedSeqs, [2, 5, 6]);
+  assert.equal(JSON.stringify(snapshot).includes("operator"), false);
+  assert.equal(JSON.stringify(snapshot).includes("sha256:secret"), false);
+});
+
 test("global event readiness hides operator home and drops unscoped events", () => {
   const { client, host } = fixture();
   client({ type: "open", streamId: "ev", endpoint: "$events", payload: { args: {} } });
