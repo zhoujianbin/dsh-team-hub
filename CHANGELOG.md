@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.3 (2026-10-22)
+
+- Republish 0.3.2 through the tag-driven GitHub release workflow (npm Trusted Publishing with provenance). No functional changes: 0.3.2 was published manually before the workflow ran and cannot be overwritten; 0.3.3 is the canonical release.
+
 ## 0.3.2 (2026-10-22)
 
 - Fix shared-session history stuck on `载入历史…` for ordinary DSH 0.2.1 journals. The member projection now covers every DSH 0.2.1 event type and user-message source that appears in normal agent work: `job/registered`, `job/settled` (labels, spawning calls and terminal details withheld), `working-directory/change` (withheld; can name operator paths), `time-context`, `working-directory`, PTC deferred-image `ptc-mode` messages and inbox splices, `skill-invocation` and `tool-goal` notices (prompt text replaced with placeholders), `compact-checkpoint` (correlated by compaction ID), image/file blocks inside `tool/ptc-dispatch` results (replaced with placeholders), `deliverables/presented` (absolute or parent-traversing paths reduced to the trailing name), and compaction summaries whose `shadowedRange` is a surface-position span (`start` may exceed `end`) with an authoritative non-contiguous `shadowedSeqs` set. A single unprojected entry previously failed the whole snapshot closed and left the chat loading forever.
